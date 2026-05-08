@@ -3,6 +3,7 @@ import pandas as pd
 import pandas_ta as ta
 import time
 import requests
+from datetime import datetime, timedelta
 
 API_KEY = "NVXqXapN5RE5NmEX9tJ4RjDALMAoAOZFXQ90vSzgdk12qmKYCv81OAlQbYI4RV6q"
 API_SECRET = "3qGBW7YvHq0HwYxxOGHcL0mESZRVbNkc17PjUi8TcMcOJuTmJbm5HHjnvn9qGXhd"
@@ -19,6 +20,9 @@ symbols = [
 ]
 
 last_signals = {}
+last_signal_times = {}
+
+COOLDOWN_MINUTES = 30
 
 def scan_market(symbol):
 
@@ -126,6 +130,15 @@ def scan_market(symbol):
     # Print only when signal changes
     if signal != last_signals.get(symbol):
 
+        last_signal_time = last_signal_times.get(symbol)
+
+        if last_signal_time:
+            elapsed = datetime.now() - last_signal_time
+
+        if elapsed < timedelta(minutes=COOLDOWN_MINUTES):
+            return
+        
+
         print("==========")
         print(f"Symbol: {symbol}")
         print(f"Price: {latest['close']}")
@@ -156,6 +169,7 @@ def scan_market(symbol):
 
         send_telegram_message(message)
         last_signals[symbol] = signal
+        last_signal_times[symbol] = datetime.now()
 
 def send_telegram_message(message):
 
