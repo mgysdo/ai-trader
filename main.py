@@ -2,9 +2,13 @@ from binance.client import Client
 import pandas as pd
 import pandas_ta as ta
 import time
+import requests
 
 API_KEY = "NVXqXapN5RE5NmEX9tJ4RjDALMAoAOZFXQ90vSzgdk12qmKYCv81OAlQbYI4RV6q"
 API_SECRET = "3qGBW7YvHq0HwYxxOGHcL0mESZRVbNkc17PjUi8TcMcOJuTmJbm5HHjnvn9qGXhd"
+
+TELEGRAM_BOT_TOKEN = "8218143691:AAG7wgsV7S8P1uncJMuf6nk8oN92zwdesEA"
+TELEGRAM_CHAT_ID = "1100684351"
 
 client = Client(API_KEY, API_SECRET)
 
@@ -116,7 +120,31 @@ def scan_market(symbol):
         print(f"ATR Confirmed: {atr_confirmed}")
         print("==========")
 
+        message = f"""
+        🚨 {signal} SIGNAL
+
+        Symbol: {symbol}
+        Price: {latest['close']}
+        Trend: {trend}
+        RSI: {latest['RSI']:.2f}
+
+        Volume Confirmed: {volume_confirmed}
+        ATR Confirmed: {atr_confirmed}
+        """
+
+        send_telegram_message(message)
         last_signals[symbol] = signal
+
+def send_telegram_message(message):
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+
+    requests.post(url, data=payload)
 
 
 # Continuous scanner loop
