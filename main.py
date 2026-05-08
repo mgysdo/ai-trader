@@ -106,8 +106,53 @@ def scan_market(symbol):
 
     atr_confirmed = latest["ATR"] > latest["close"] * 0.002
 
+    confidence = 0
+
     # Signal logic
     signal = "NONE"
+
+    # Trend strength
+    ema_gap_percent = (
+        abs(latest["EMA20"] - latest["EMA50"])
+        / latest["close"]
+    ) * 100
+
+    # RSI quality
+    if 55 <= latest["RSI"] <= 65:
+        confidence += 25
+
+    elif 50 <= latest["RSI"] <= 70:
+        confidence += 15
+
+    # Volume strength
+    volume_ratio = (
+        latest["volume"] / latest["VOLUME_MA20"]
+    )
+
+    if volume_ratio >= 1.5:
+        confidence += 25
+
+    elif volume_ratio >= 1.0:
+        confidence += 15
+
+    # ATR strength
+    atr_percent = (
+        latest["ATR"] / latest["close"]
+    ) * 100
+
+    if atr_percent >= 0.5:
+        confidence += 25
+
+    elif atr_percent >= 0.2:
+        confidence += 15
+
+    # EMA separation
+    if ema_gap_percent >= 0.5:
+        confidence += 25
+
+    elif ema_gap_percent >= 0.2:
+        confidence += 15
+
 
     if (
         latest["EMA20"] > latest["EMA50"]
@@ -115,6 +160,7 @@ def scan_market(symbol):
         and volume_confirmed
         and atr_confirmed
         and higher_trend == "BULLISH"
+        and confidence >= 60
     ):
         signal = "LONG"
 
@@ -124,6 +170,7 @@ def scan_market(symbol):
         and volume_confirmed
         and atr_confirmed
         and higher_trend == "BEARISH"
+        and confidence >= 60
     ):
         signal = "SHORT"
 
@@ -153,6 +200,7 @@ def scan_market(symbol):
         print(f"SIGNAL: {signal}")
         print(f"ATR: {latest['ATR']:.2f}")
         print(f"ATR Confirmed: {atr_confirmed}")
+        print(f"Confidence: {confidence}%")
         print("==========")
 
         message = f"""
@@ -162,6 +210,7 @@ def scan_market(symbol):
         Price: {latest['close']}
         Trend: {trend}
         RSI: {latest['RSI']:.2f}
+        Confidence: {confidence}%
 
         Volume Confirmed: {volume_confirmed}
         ATR Confirmed: {atr_confirmed}
