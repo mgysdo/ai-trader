@@ -106,6 +106,11 @@ def scan_market(symbol):
     latest = df.iloc[-2]
     higher_latest = higher_df.iloc[-2]
 
+    previous_candle = df.iloc[-3]
+
+    recent_high = df["high"].iloc[-10:-2].max()
+    recent_low = df["low"].iloc[-10:-2].min()   
+
     # Trends
     trend = (
         "BULLISH"
@@ -127,6 +132,9 @@ def scan_market(symbol):
     atr_confirmed = (
         latest["ATR"] > latest["close"] * 0.002
     )
+
+    bullish_breakout = latest["close"] > recent_high
+    bearish_breakdown = latest["close"] < recent_low
 
     # Signal
     signal = "NONE"
@@ -190,6 +198,7 @@ def scan_market(symbol):
         and atr_confirmed
         and higher_trend == "BULLISH"
         and confidence >= 60
+        and bullish_breakout
     ):
 
         signal = "LONG"
@@ -208,6 +217,7 @@ def scan_market(symbol):
         and atr_confirmed
         and higher_trend == "BEARISH"
         and confidence >= 60
+        and bearish_breakdown
     ):
 
         signal = "SHORT"
@@ -261,6 +271,8 @@ def scan_market(symbol):
         print(f"Take Profit: {take_profit:.2f}")
         print("Risk/Reward: 1:2")
 
+        print(f"Bullish Breakout: {bullish_breakout}")
+        print(f"Bearish Breakdown: {bearish_breakdown}")
         print("==========")
 
         # Telegram alert
