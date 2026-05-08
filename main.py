@@ -59,8 +59,15 @@ def scan_market(symbol):
 
     df["VOLUME_MA20"] = ta.sma(df["volume"], length=20)
 
-    # Use latest candle
-    latest = df.iloc[-1]
+    df["ATR"] = ta.atr(
+    high=df["high"],
+    low=df["low"],
+    close=df["close"],
+    length=14
+)
+
+    # Use last FULLY CLOSED candle
+    latest = df.iloc[-2]
 
     # Trend
     trend = "BULLISH" if latest["EMA20"] > latest["EMA50"] else "BEARISH"
@@ -70,6 +77,8 @@ def scan_market(symbol):
         latest["volume"] > latest["VOLUME_MA20"] * 0.8
     )
 
+    atr_confirmed = latest["ATR"] > latest["close"] * 0.002
+
     # Signal logic
     signal = "NONE"
 
@@ -77,6 +86,7 @@ def scan_market(symbol):
         latest["EMA20"] > latest["EMA50"]
         and 50 <= latest["RSI"] <= 70
         and volume_confirmed
+        and atr_confirmed
     ):
         signal = "LONG"
 
@@ -84,6 +94,7 @@ def scan_market(symbol):
         latest["EMA20"] < latest["EMA50"]
         and 30 <= latest["RSI"] <= 50
         and volume_confirmed
+        and atr_confirmed
     ):
         signal = "SHORT"
 
@@ -101,6 +112,8 @@ def scan_market(symbol):
         print(f"Volume MA20: {latest['VOLUME_MA20']:.2f}")
         print(f"Volume Confirmed: {volume_confirmed}")
         print(f"SIGNAL: {signal}")
+        print(f"ATR: {latest['ATR']:.2f}")
+        print(f"ATR Confirmed: {atr_confirmed}")
         print("==========")
 
         last_signals[symbol] = signal
