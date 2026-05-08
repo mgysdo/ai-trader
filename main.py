@@ -31,6 +31,12 @@ def scan_market(symbol):
         limit=100
     )
 
+    higher_klines = client.get_klines(
+        symbol=symbol,
+        interval=Client.KLINE_INTERVAL_1HOUR,
+        limit=100
+    )
+
     # Create dataframe
     columns = [
         "open_time",
@@ -48,6 +54,7 @@ def scan_market(symbol):
     ]
 
     df = pd.DataFrame(klines, columns=columns)
+    higher_df = pd.DataFrame(higher_klines, columns=columns)
 
     # Convert types
     price_columns = ["open", "high", "low", "close", "volume"]
@@ -55,9 +62,15 @@ def scan_market(symbol):
     for col in price_columns:
         df[col] = df[col].astype(float)
 
+    for col in price_columns:
+        higher_df[col] = higher_df[col].astype(float)
+    
     # Calculate indicators
     df["EMA20"] = ta.ema(df["close"], length=20)
     df["EMA50"] = ta.ema(df["close"], length=50)
+
+    higher_df["EMA20"] = ta.ema(higher_df["close"], length=20)
+    higher_df["EMA50"] = ta.ema(higher_df["close"], length=50)
 
     df["RSI"] = ta.rsi(df["close"], length=14)
 
@@ -72,9 +85,15 @@ def scan_market(symbol):
 
     # Use last FULLY CLOSED candle
     latest = df.iloc[-2]
+    higher_latest = higher_df.iloc[-2]
 
     # Trend
     trend = "BULLISH" if latest["EMA20"] > latest["EMA50"] else "BEARISH"
+    higher_trend = (
+        "BULLISH"
+        if higher_latest["EMA20"] > higher_latest["EMA50"]
+        else "BEARISH"
+    )
 
     # Volume confirmation
     volume_confirmed = (
@@ -91,6 +110,7 @@ def scan_market(symbol):
         and 50 <= latest["RSI"] <= 70
         and volume_confirmed
         and atr_confirmed
+        and higher_trend == "BULLISH"
     ):
         signal = "LONG"
 
@@ -99,6 +119,7 @@ def scan_market(symbol):
         and 30 <= latest["RSI"] <= 50
         and volume_confirmed
         and atr_confirmed
+        and higher_trend == "BEARISH"
     ):
         signal = "SHORT"
 
@@ -109,6 +130,7 @@ def scan_market(symbol):
         print(f"Symbol: {symbol}")
         print(f"Price: {latest['close']}")
         print(f"Trend: {trend}")
+        print(f"1H Trend: {higher_trend}")
         print(f"EMA20: {latest['EMA20']:.2f}")
         print(f"EMA50: {latest['EMA50']:.2f}")
         print(f"RSI: {latest['RSI']:.2f}")
