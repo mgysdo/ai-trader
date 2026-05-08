@@ -1,8 +1,9 @@
 from binance.client import Client
 import pandas as pd
 import pandas_ta as ta
-import time
 import requests
+import time
+
 from datetime import datetime, timedelta
 
 API_KEY = "NVXqXapN5RE5NmEX9tJ4RjDALMAoAOZFXQ90vSzgdk12qmKYCv81OAlQbYI4RV6q"
@@ -24,24 +25,38 @@ last_signal_times = {}
 
 COOLDOWN_MINUTES = 30
 
+
+def send_telegram_message(message):
+
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message
+    }
+
+    requests.post(url, data=payload)
+
+
 def scan_market(symbol):
 
     global last_signals
+    global last_signal_times
 
-    # Fetch candles
+    # Fetch 5m candles
     klines = client.get_klines(
         symbol=symbol,
         interval=Client.KLINE_INTERVAL_5MINUTE,
         limit=100
     )
 
+    # Fetch 1h candles
     higher_klines = client.get_klines(
         symbol=symbol,
         interval=Client.KLINE_INTERVAL_1HOUR,
         limit=100
     )
 
-    # Create dataframe
     columns = [
         "open_time",
         "open",
@@ -57,6 +72,7 @@ def scan_market(symbol):
         "ignore"
     ]
 
+    # Create dataframes
     df = pd.DataFrame(klines, columns=columns)
     higher_df = pd.DataFrame(higher_klines, columns=columns)
 
@@ -65,53 +81,66 @@ def scan_market(symbol):
 
     for col in price_columns:
         df[col] = df[col].astype(float)
-
-    for col in price_columns:
         higher_df[col] = higher_df[col].astype(float)
-    
-    # Calculate indicators
+
+    # Indicators (5m)
     df["EMA20"] = ta.ema(df["close"], length=20)
     df["EMA50"] = ta.ema(df["close"], length=50)
-
-    higher_df["EMA20"] = ta.ema(higher_df["close"], length=20)
-    higher_df["EMA50"] = ta.ema(higher_df["close"], length=50)
 
     df["RSI"] = ta.rsi(df["close"], length=14)
 
     df["VOLUME_MA20"] = ta.sma(df["volume"], length=20)
 
     df["ATR"] = ta.atr(
-    high=df["high"],
-    low=df["low"],
-    close=df["close"],
-    length=14
-)
+        high=df["high"],
+        low=df["low"],
+        close=df["close"],
+        length=14
+    )
 
-    # Use last FULLY CLOSED candle
+    # Indicators (1h)
+    higher_df["EMA20"] = ta.ema(higher_df["close"], length=20)
+    higher_df["EMA50"] = ta.ema(higher_df["close"], length=50)
+
+    # Use CLOSED candles only
     latest = df.iloc[-2]
     higher_latest = higher_df.iloc[-2]
 
-    # Trend
-    trend = "BULLISH" if latest["EMA20"] > latest["EMA50"] else "BEARISH"
+    # Trends
+    trend = (
+        "BULLISH"
+        if latest["EMA20"] > latest["EMA50"]
+        else "BEARISH"
+    )
+
     higher_trend = (
         "BULLISH"
         if higher_latest["EMA20"] > higher_latest["EMA50"]
         else "BEARISH"
     )
 
-    # Volume confirmation
+    # Filters
     volume_confirmed = (
         latest["volume"] > latest["VOLUME_MA20"] * 0.8
     )
 
-    atr_confirmed = latest["ATR"] > latest["close"] * 0.002
+    atr_confirmed = (
+        latest["ATR"] > latest["close"] * 0.002
+    )
 
-    confidence = 0
-
-    # Signal logic
+    # Signal
     signal = "NONE"
 
-    # Trend strength
+    # Confidence scoring
+    confidence = 0
+
+    # Entry price
+    entry_price = latest["close"]
+
+    # ATR stop distance
+    stop_distance = latest["ATR"] * 1.5
+
+    # EMA gap strength
     ema_gap_percent = (
         abs(latest["EMA20"] - latest["EMA50"])
         / latest["close"]
@@ -153,7 +182,7 @@ def scan_market(symbol):
     elif ema_gap_percent >= 0.2:
         confidence += 15
 
-
+    # LONG setup
     if (
         latest["EMA20"] > latest["EMA50"]
         and 50 <= latest["RSI"] <= 70
@@ -162,8 +191,16 @@ def scan_market(symbol):
         and higher_trend == "BULLISH"
         and confidence >= 60
     ):
+
         signal = "LONG"
 
+        stop_loss = entry_price - stop_distance
+
+        take_profit = (
+            entry_price + (stop_distance * 2)
+        )
+
+    # SHORT setup
     elif (
         latest["EMA20"] < latest["EMA50"]
         and 30 <= latest["RSI"] <= 50
@@ -172,75 +209,100 @@ def scan_market(symbol):
         and higher_trend == "BEARISH"
         and confidence >= 60
     ):
+
         signal = "SHORT"
 
-    # Print only when signal changes
-    if signal != last_signals.get(symbol):
+        stop_loss = entry_price + stop_distance
 
-        last_signal_time = last_signal_times.get(symbol)
+        take_profit = (
+            entry_price - (stop_distance * 2)
+        )
 
-        if last_signal_time:
-            elapsed = datetime.now() - last_signal_time
+    else:
+        return
+
+    # Cooldown check
+    last_signal_time = last_signal_times.get(symbol)
+
+    if last_signal_time:
+
+        elapsed = datetime.now() - last_signal_time
 
         if elapsed < timedelta(minutes=COOLDOWN_MINUTES):
             return
-        
+
+    # Prevent duplicate signals
+    if signal != last_signals.get(symbol):
 
         print("==========")
         print(f"Symbol: {symbol}")
         print(f"Price: {latest['close']}")
         print(f"Trend: {trend}")
         print(f"1H Trend: {higher_trend}")
+
         print(f"EMA20: {latest['EMA20']:.2f}")
         print(f"EMA50: {latest['EMA50']:.2f}")
+
         print(f"RSI: {latest['RSI']:.2f}")
+
         print(f"Volume: {latest['volume']:.2f}")
         print(f"Volume MA20: {latest['VOLUME_MA20']:.2f}")
         print(f"Volume Confirmed: {volume_confirmed}")
-        print(f"SIGNAL: {signal}")
+
         print(f"ATR: {latest['ATR']:.2f}")
         print(f"ATR Confirmed: {atr_confirmed}")
+
         print(f"Confidence: {confidence}%")
+
+        print(f"SIGNAL: {signal}")
+
+        print(f"Entry: {entry_price:.2f}")
+        print(f"Stop Loss: {stop_loss:.2f}")
+        print(f"Take Profit: {take_profit:.2f}")
+        print("Risk/Reward: 1:2")
+
         print("==========")
 
+        # Telegram alert
         message = f"""
-        🚨 {signal} SIGNAL
+            🚨 {signal} SIGNAL
 
-        Symbol: {symbol}
-        Price: {latest['close']}
-        Trend: {trend}
-        RSI: {latest['RSI']:.2f}
-        Confidence: {confidence}%
+            Symbol: {symbol}
 
-        Volume Confirmed: {volume_confirmed}
-        ATR Confirmed: {atr_confirmed}
-        """
+            Price: {latest['close']}
+
+            Trend: {trend}
+            1H Trend: {higher_trend}
+
+            RSI: {latest['RSI']:.2f}
+
+            Confidence: {confidence}%
+
+            Entry: {entry_price:.2f}
+            Stop Loss: {stop_loss:.2f}
+            Take Profit: {take_profit:.2f}
+
+            Risk/Reward: 1:2
+
+            Volume Confirmed: {volume_confirmed}
+            ATR Confirmed: {atr_confirmed}
+            """
 
         send_telegram_message(message)
+
         last_signals[symbol] = signal
         last_signal_times[symbol] = datetime.now()
-
-def send_telegram_message(message):
-
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message
-    }
-
-    requests.post(url, data=payload)
-
 
 # Continuous scanner loop
 while True:
 
     try:
+
         for symbol in symbols:
             scan_market(symbol)
 
     except Exception as e:
         print(f"Error: {e}")
 
-    # Scan every 60 seconds
+    # Scan every minute
     time.sleep(60)
