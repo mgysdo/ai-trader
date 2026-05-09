@@ -1,217 +1,229 @@
-from binance.client import Client
 import pandas as pd
-import pandas_ta as ta
-from backtesting import Backtest, Strategy
 
-API_KEY = "NVXqXapN5RE5NmEX9tJ4RjDALMAoAOZFXQ90vSzgdk12qmKYCv81OAlQbYI4RV6q"
-API_SECRET = "3qGBW7YvHq0HwYxxOGHcL0mESZRVbNkc17PjUi8TcMcOJuTmJbm5HHjnvn9qGXhd"
+from backtesting import Backtest
+from backtesting import Strategy
 
-client = Client(API_KEY, API_SECRET)
+from ta.trend import EMAIndicator
+from ta.momentum import RSIIndicator
+from ta.volatility import AverageTrueRange
 
 
-# Fetch historical candles
-klines = client.get_klines(
-    symbol="BTCUSDT",
-    interval=Client.KLINE_INTERVAL_5MINUTE,
-    limit=2000
+# =========================================================
+# LOAD DATA
+# =========================================================
+
+df = pd.read_csv("btc_usdt_1h.csv")
+
+df["timestamp"] = pd.to_datetime(df["timestamp"])
+
+df.set_index("timestamp", inplace=True)
+
+# Rename columns for backtesting.py
+df.rename(
+    columns={
+        "open": "Open",
+        "high": "High",
+        "low": "Low",
+        "close": "Close",
+        "volume": "Volume"
+    },
+    inplace=True
 )
 
-# Dataframe columns
-columns = [
-    "OpenTime",
-    "Open",
-    "High",
-    "Low",
-    "Close",
-    "Volume",
-    "CloseTime",
-    "QuoteAssetVolume",
-    "NumberOfTrades",
-    "TakerBuyBaseAssetVolume",
-    "TakerBuyQuoteAssetVolume",
-    "Ignore"
+df = df[
+    [
+        "Open",
+        "High",
+        "Low",
+        "Close",
+        "Volume"
+    ]
 ]
 
-# Create dataframe
-df = pd.DataFrame(klines, columns=columns)
+df = df.dropna()
 
-# Convert required columns
-price_columns = [
-    "Open",
-    "High",
-    "Low",
-    "Close",
-    "Volume"
-]
 
-for col in price_columns:
-    df[col] = df[col].astype(float)
+# =========================================================
+# INDICATORS
+# =========================================================
 
-# Convert timestamp
-df["OpenTime"] = pd.to_datetime(df["OpenTime"], unit="ms")
+def add_indicators(dataframe):
 
-# Set index
-df.set_index("OpenTime", inplace=True)
+    dataframe["ema_fast"] = EMAIndicator(
+        close=dataframe["Close"],
+        window=20
+    ).ema_indicator()
 
-# Indicators
-df["EMA20"] = ta.ema(df["Close"], length=20)
-df["EMA50"] = ta.ema(df["Close"], length=50)
+    dataframe["ema_slow"] = EMAIndicator(
+        close=dataframe["Close"],
+        window=50
+    ).ema_indicator()
 
-df["RSI"] = ta.rsi(df["Close"], length=14)
+    dataframe["rsi"] = RSIIndicator(
+        close=dataframe["Close"],
+        window=14
+    ).rsi()
 
-df["VOLUME_MA20"] = ta.sma(df["Volume"], length=20)
+    dataframe["atr"] = AverageTrueRange(
+        high=dataframe["High"],
+        low=dataframe["Low"],
+        close=dataframe["Close"],
+        window=14
+    ).average_true_range()
 
-df["ATR"] = ta.atr(
-    high=df["High"],
-    low=df["Low"],
-    close=df["Close"],
-    length=14
-)
+    return dataframe
 
-# Drop NaN rows
-df.dropna(inplace=True)
 
+df = add_indicators(df)
+
+df = df.dropna()
+
+
+# =========================================================
+# STRATEGY
+# =========================================================
 
 class EMARSIMomentumStrategy(Strategy):
 
+    risk_reward_ratio = 2
+
     def init(self):
-        pass
+
+        self.last_trade_bar = -100
 
     def next(self):
 
-        # Current candle
-        price = self.data.Close[-1]
+        current_bar = len(self.data.Close)
 
-        ema20 = self.data.EMA20[-1]
-        ema50 = self.data.EMA50[-1]
+        cooldown_bars = 12
 
-        rsi = self.data.RSI[-1]
-
-        volume = self.data.Volume[-1]
-        volume_ma20 = self.data.VOLUME_MA20[-1]
-
-        atr = self.data.ATR[-1]
-
-        # Filters
-        volume_confirmed = (
-            volume > volume_ma20 * 0.8
-        )
-
-        atr_confirmed = (
-            atr > price * 0.002
-        )
-
-        # Confidence scoring
-        confidence = 0
-
-        # EMA gap strength
-        ema_gap_percent = (
-            abs(ema20 - ema50)
-            / price
-        ) * 100
-
-        # RSI quality
-        if 55 <= rsi <= 65:
-            confidence += 25
-
-        elif 50 <= rsi <= 70:
-            confidence += 15
-
-        # Volume quality
-        volume_ratio = (
-            volume / volume_ma20
-        )
-
-        if volume_ratio >= 1.5:
-            confidence += 25
-
-        elif volume_ratio >= 1.0:
-            confidence += 15
-
-        # ATR quality
-        atr_percent = (
-            atr / price
-        ) * 100
-
-        if atr_percent >= 0.5:
-            confidence += 25
-
-        elif atr_percent >= 0.2:
-            confidence += 15
-
-        # EMA separation
-        if ema_gap_percent >= 0.5:
-            confidence += 25
-
-        elif ema_gap_percent >= 0.2:
-            confidence += 15
-
-        # Avoid multiple positions
-        if self.position:
+        if current_bar - self.last_trade_bar < cooldown_bars:
             return
 
-        # LONG setup
-        if (
-            ema20 > ema50
-            and 50 <= rsi <= 70
-            and volume_confirmed
-            and atr_confirmed
-            and confidence >= 60
-        ):
+        current_price = self.data.Close[-1]
 
-            stop_distance = atr * 1.5
+        ema_fast = self.data.ema_fast[-1]
+        ema_slow = self.data.ema_slow[-1]
 
-            stop_loss = (
-                price - stop_distance
-            )
+        previous_ema_fast = self.data.ema_fast[-2]
+        previous_ema_slow = self.data.ema_slow[-2]
 
-            take_profit = (
-                price + (stop_distance * 2)
-            )
+        rsi = self.data.rsi[-1]
 
-            self.buy(
-                sl=stop_loss,
-                tp=take_profit
-            )
+        atr = self.data.atr[-1]
 
-        # SHORT setup
-        elif (
-            ema20 < ema50
-            and 30 <= rsi <= 50
-            and volume_confirmed
-            and atr_confirmed
-            and confidence >= 60
-        ):
+        # =====================================================
+        # TREND CONDITIONS
+        # =====================================================
 
-            stop_distance = atr * 1.5
+        bullish_trend = (
+            previous_ema_fast <= previous_ema_slow
+            and ema_fast > ema_slow
+        )
 
-            stop_loss = (
-                price + stop_distance
-            )
+        bearish_trend = (
+            previous_ema_fast >= previous_ema_slow
+            and ema_fast < ema_slow
+        )
 
-            take_profit = (
-                price - (stop_distance * 2)
-            )
+        # =====================================================
+        # MOMENTUM FILTER
+        # =====================================================
 
-            self.sell(
-                sl=stop_loss,
-                tp=take_profit
-            )
+        bullish_momentum = (
+            rsi > 55
+            and rsi < 70
+        )
+
+        bearish_momentum = (
+            rsi < 45
+            and rsi > 30
+        )
+
+        # =====================================================
+        # BUY
+        # =====================================================
+
+        if bullish_trend and bullish_momentum:
+
+            if not self.position:
+
+                stop_loss = current_price - (atr * 1.5)
+
+                risk = current_price - stop_loss
+
+                take_profit = current_price + (
+                    risk * self.risk_reward_ratio
+                )
+
+                cash_risk = self.equity * 0.01
+
+                position_size = cash_risk / risk
+
+                position_size = max(
+                    1,
+                    int(position_size)
+                )
+
+                self.buy(
+                    size=position_size,
+                    sl=stop_loss,
+                    tp=take_profit
+                )
+
+                self.last_trade_bar = current_bar
+
+        # =====================================================
+        # SELL
+        # =====================================================
+
+        if bearish_trend and bearish_momentum:
+
+            if not self.position:
+
+                stop_loss = current_price + (atr * 1.5)
+
+                risk = stop_loss - current_price
+
+                take_profit = current_price - (
+                    risk * self.risk_reward_ratio
+                )
+
+                cash_risk = self.equity * 0.01
+
+                position_size = cash_risk / risk
+
+                position_size = max(
+                    1,
+                    int(position_size)
+                )
+
+                self.sell(
+                    size=position_size,
+                    sl=stop_loss,
+                    tp=take_profit
+                )
+
+                self.last_trade_bar = current_bar
 
 
-# Run backtest
+# =========================================================
+# BACKTEST
+# =========================================================
+
 bt = Backtest(
     df,
     EMARSIMomentumStrategy,
     cash=100000,
-    commission=0.001,
-    exclusive_orders=True
+    commission=0.0005,
+    margin=1,
+    trade_on_close=True,
+    exclusive_orders=True,
+    finalize_trades=True
 )
 
 stats = bt.run()
 
-# Print results
 print(stats)
 
-# Show chart
 bt.plot()
