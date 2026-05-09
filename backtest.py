@@ -203,7 +203,7 @@ class EMARSIMomentumStrategy(Strategy):
 bt = Backtest(
     df,
     EMARSIMomentumStrategy,
-    cash=10000,
+    cash=100000,
     commission=0.001,
     exclusive_orders=True
 )
