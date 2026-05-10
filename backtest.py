@@ -1,37 +1,37 @@
 import pandas as pd
+import numpy as np
+import warnings
 
-from backtesting import Backtest
-from backtesting import Strategy
+from backtesting import Backtest, Strategy
 
-from ta.trend import EMAIndicator
-from ta.momentum import RSIIndicator
-from ta.volatility import AverageTrueRange
+warnings.filterwarnings(
+    "ignore",
+    message="If you want to use multi-process optimization",
+    category=RuntimeWarning,
+)
 
 
-# =========================================================
-# LOAD DATA
-# =========================================================
+# =========================
+# LOAD CSV
+# =========================
 
-df = pd.read_csv("btc_usdt_1h.csv")
+df = pd.read_csv("BTCUSDT_1h.csv")
+
+print(df.columns)
 
 df["timestamp"] = pd.to_datetime(df["timestamp"])
 
-df.set_index("timestamp", inplace=True)
-
-# Rename columns for backtesting.py
-df.rename(
-    columns={
-        "open": "Open",
-        "high": "High",
-        "low": "Low",
-        "close": "Close",
-        "volume": "Volume"
-    },
-    inplace=True
-)
+df = df.rename(columns={
+    "open": "Open",
+    "high": "High",
+    "low": "Low",
+    "close": "Close",
+    "volume": "Volume"
+})
 
 df = df[
     [
+        "timestamp",
         "Open",
         "High",
         "Low",
@@ -40,190 +40,330 @@ df = df[
     ]
 ]
 
-df = df.dropna()
+df.set_index("timestamp", inplace=True)
 
 
-# =========================================================
+# =========================
 # INDICATORS
-# =========================================================
+# =========================
 
-def add_indicators(dataframe):
-
-    dataframe["ema_fast"] = EMAIndicator(
-        close=dataframe["Close"],
-        window=20
-    ).ema_indicator()
-
-    dataframe["ema_slow"] = EMAIndicator(
-        close=dataframe["Close"],
-        window=50
-    ).ema_indicator()
-
-    dataframe["rsi"] = RSIIndicator(
-        close=dataframe["Close"],
-        window=14
-    ).rsi()
-
-    dataframe["atr"] = AverageTrueRange(
-        high=dataframe["High"],
-        low=dataframe["Low"],
-        close=dataframe["Close"],
-        window=14
-    ).average_true_range()
-
-    return dataframe
+def EMA(series, period):
+    return pd.Series(series).ewm(
+        span=period,
+        adjust=False
+    ).mean()
 
 
-df = add_indicators(df)
+def RSI(series, period=14):
+    series = pd.Series(series)
 
-df = df.dropna()
+    delta = series.diff()
+
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+
+    rs = avg_gain / avg_loss
+
+    rsi = 100 - (100 / (1 + rs))
+
+    return rsi
 
 
-# =========================================================
+def ATR(high, low, close, period=14):
+    high = pd.Series(high)
+    low = pd.Series(low)
+    close = pd.Series(close)
+
+    tr1 = high - low
+    tr2 = abs(high - close.shift())
+    tr3 = abs(low - close.shift())
+
+    tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+
+    atr = tr.rolling(period).mean()
+
+    return atr
+
+
+# =========================
 # STRATEGY
-# =========================================================
+# =========================
 
 class EMARSIMomentumStrategy(Strategy):
 
-    risk_reward_ratio = 2
+    fast_ema = 9
+    slow_ema = 21
+
+    rsi_period = 14
+
+    # Beginner-safe default: risk only 0.25% equity per trade
+    risk_per_trade = 0.0025
+
+    atr_period = 14
+    atr_percent_min = 0.5
+
+    rr_ratio = 2
+    long_rsi_low = 60
+    long_rsi_high = 70
 
     def init(self):
 
-        self.last_trade_bar = -100
+        close = self.data.Close
+        high = self.data.High
+        low = self.data.Low
+
+        self.fastEMA = self.I(
+            EMA,
+            close,
+            self.fast_ema
+        )
+
+        self.slowEMA = self.I(
+            EMA,
+            close,
+            self.slow_ema
+        )
+
+        self.rsi = self.I(
+            RSI,
+            close,
+            self.rsi_period
+        )
+
+        self.atr = self.I(
+            ATR,
+            high,
+            low,
+            close,
+            self.atr_period
+        )
 
     def next(self):
 
-        current_bar = len(self.data.Close)
+        price = self.data.Close[-1]
 
-        cooldown_bars = 12
+        fastEMA = self.fastEMA[-1]
+        slowEMA = self.slowEMA[-1]
+        slowEMA_prev = self.slowEMA[-2]
 
-        if current_bar - self.last_trade_bar < cooldown_bars:
+        rsi = self.rsi[-1]
+        atr = self.atr[-1]
+
+        if np.isnan(atr) or np.isnan(slowEMA_prev):
             return
 
-        current_price = self.data.Close[-1]
+        # Skip low-volatility candles to avoid weak setups.
+        atr_percent = (atr / price) * 100
+        if atr_percent < self.atr_percent_min:
+            return
 
-        ema_fast = self.data.ema_fast[-1]
-        ema_slow = self.data.ema_slow[-1]
+        # =========================
+        # LONG ENTRY
+        # =========================
 
-        previous_ema_fast = self.data.ema_fast[-2]
-        previous_ema_slow = self.data.ema_slow[-2]
+        if (
+            not self.position
+            and fastEMA > slowEMA
+            and price > slowEMA
+            and slowEMA > slowEMA_prev
+            and self.long_rsi_low <= rsi <= self.long_rsi_high
+        ):
 
-        rsi = self.data.rsi[-1]
+            stop_loss = price - (1.5 * atr)
 
-        atr = self.data.atr[-1]
+            risk_amount = self.equity * self.risk_per_trade
 
-        # =====================================================
-        # TREND CONDITIONS
-        # =====================================================
+            risk_per_unit = abs(price - stop_loss)
 
-        bullish_trend = (
-            previous_ema_fast <= previous_ema_slow
-            and ema_fast > ema_slow
+            if risk_per_unit <= 0:
+                return
+
+            position_size = risk_amount / risk_per_unit
+
+            # Prevent margin issue
+            max_size = self.equity * 0.95 / price
+
+            position_size = min(
+                position_size,
+                max_size
+            )
+
+            position_size = max(1, int(position_size))
+
+            take_profit = price + (
+                (price - stop_loss)
+                * self.rr_ratio
+            )
+
+            self.buy(
+                size=position_size,
+                sl=stop_loss,
+                tp=take_profit
+            )
+
+        # SHORT entry disabled for beginner long-only baseline.
+
+
+# =========================
+# BACKTEST (TRAIN / TEST)
+# =========================
+
+def run_backtest(dataset):
+    bt = Backtest(
+        dataset,
+        EMARSIMomentumStrategy,
+        cash=100000,
+        commission=0.001,
+        exclusive_orders=True,
+        finalize_trades=True
+    )
+    return bt, bt.run()
+
+
+def optimize_train(train_dataset):
+    bt = Backtest(
+        train_dataset,
+        EMARSIMomentumStrategy,
+        cash=100000,
+        commission=0.001,
+        exclusive_orders=True,
+        finalize_trades=True
+    )
+
+    stats = bt.optimize(
+        long_rsi_low=range(56, 64, 2),
+        long_rsi_high=range(66, 76, 2),
+        atr_percent_min=[0.4, 0.5, 0.6],
+        rr_ratio=[1.5, 2.0, 2.5],
+        maximize="Return [%]",
+        constraint=lambda p: p.long_rsi_low < p.long_rsi_high,
+        return_heatmap=False
+    )
+
+    best = {
+        "long_rsi_low": stats["_strategy"].long_rsi_low,
+        "long_rsi_high": stats["_strategy"].long_rsi_high,
+        "atr_percent_min": stats["_strategy"].atr_percent_min,
+        "rr_ratio": stats["_strategy"].rr_ratio,
+    }
+
+    return best, stats
+
+
+def print_core_metrics(title, stats):
+    print(f"\n===== {title} =====")
+    print(f"Return [%]: {stats['Return [%]']:.5f}")
+    print(f"Max. Drawdown [%]: {stats['Max. Drawdown [%]']:.5f}")
+    print(f"# Trades: {int(stats['# Trades'])}")
+    print(f"Profit Factor: {stats['Profit Factor']:.5f}")
+
+
+def run_walk_forward(dataset, train_ratio=0.5, test_ratio=0.2, step_ratio=0.1):
+    total_rows = len(dataset)
+
+    train_size = int(total_rows * train_ratio)
+    test_size = int(total_rows * test_ratio)
+    step_size = int(total_rows * step_ratio)
+
+    if train_size <= 0 or test_size <= 0 or step_size <= 0:
+        return pd.DataFrame()
+
+    window = 1
+    start = 0
+    results = []
+
+    while start + train_size + test_size <= total_rows:
+        train_slice = dataset.iloc[start:start + train_size].copy()
+        test_start = start + train_size
+        test_end = test_start + test_size
+        test_slice = dataset.iloc[test_start:test_end].copy()
+
+        best_params, _ = optimize_train(train_slice)
+
+        test_bt = Backtest(
+            test_slice,
+            EMARSIMomentumStrategy,
+            cash=100000,
+            commission=0.001,
+            exclusive_orders=True,
+            finalize_trades=True
         )
+        test_stats = test_bt.run(**best_params)
 
-        bearish_trend = (
-            previous_ema_fast >= previous_ema_slow
-            and ema_fast < ema_slow
-        )
+        results.append({
+            "window": window,
+            "train_start": train_slice.index[0],
+            "train_end": train_slice.index[-1],
+            "test_start": test_slice.index[0],
+            "test_end": test_slice.index[-1],
+            "test_return_pct": float(test_stats["Return [%]"]),
+            "test_max_dd_pct": float(test_stats["Max. Drawdown [%]"]),
+            "test_trades": int(test_stats["# Trades"]),
+            "test_profit_factor": float(test_stats["Profit Factor"]),
+        })
 
-        # =====================================================
-        # MOMENTUM FILTER
-        # =====================================================
+        window += 1
+        start += step_size
 
-        bullish_momentum = (
-            rsi > 55
-            and rsi < 70
-        )
-
-        bearish_momentum = (
-            rsi < 45
-            and rsi > 30
-        )
-
-        # =====================================================
-        # BUY
-        # =====================================================
-
-        if bullish_trend and bullish_momentum:
-
-            if not self.position:
-
-                stop_loss = current_price - (atr * 1.5)
-
-                risk = current_price - stop_loss
-
-                take_profit = current_price + (
-                    risk * self.risk_reward_ratio
-                )
-
-                cash_risk = self.equity * 0.01
-
-                position_size = cash_risk / risk
-
-                position_size = max(
-                    1,
-                    int(position_size)
-                )
-
-                self.buy(
-                    size=position_size,
-                    sl=stop_loss,
-                    tp=take_profit
-                )
-
-                self.last_trade_bar = current_bar
-
-        # =====================================================
-        # SELL
-        # =====================================================
-
-        if bearish_trend and bearish_momentum:
-
-            if not self.position:
-
-                stop_loss = current_price + (atr * 1.5)
-
-                risk = stop_loss - current_price
-
-                take_profit = current_price - (
-                    risk * self.risk_reward_ratio
-                )
-
-                cash_risk = self.equity * 0.01
-
-                position_size = cash_risk / risk
-
-                position_size = max(
-                    1,
-                    int(position_size)
-                )
-
-                self.sell(
-                    size=position_size,
-                    sl=stop_loss,
-                    tp=take_profit
-                )
-
-                self.last_trade_bar = current_bar
+    return pd.DataFrame(results)
 
 
-# =========================================================
-# BACKTEST
-# =========================================================
+def print_walk_forward_summary(wf_df):
+    if wf_df.empty:
+        print("\n===== WALK-FORWARD SUMMARY =====")
+        print("Not enough data for walk-forward windows.")
+        return
 
-bt = Backtest(
-    df,
-    EMARSIMomentumStrategy,
-    cash=100000,
-    commission=0.0005,
-    margin=1,
-    trade_on_close=True,
-    exclusive_orders=True,
-    finalize_trades=True
-)
+    print("\n===== WALK-FORWARD SUMMARY =====")
+    display_cols = [
+        "window",
+        "test_return_pct",
+        "test_max_dd_pct",
+        "test_trades",
+        "test_profit_factor",
+    ]
+    print(wf_df[display_cols].round(4).to_string(index=False))
 
-stats = bt.run()
+    print("\n===== WALK-FORWARD AVERAGES =====")
+    print(f"Avg Return [%]: {wf_df['test_return_pct'].mean():.5f}")
+    print(f"Avg Max. Drawdown [%]: {wf_df['test_max_dd_pct'].mean():.5f}")
+    print(f"Avg # Trades: {wf_df['test_trades'].mean():.2f}")
+    print(f"Avg Profit Factor: {wf_df['test_profit_factor'].mean():.5f}")
 
-print(stats)
 
-bt.plot()
+def main():
+    split_index = int(len(df) * 0.7)
+    train_df = df.iloc[:split_index].copy()
+    test_df = df.iloc[split_index:].copy()
+
+    best_params, train_stats = optimize_train(train_df)
+
+    print("\n===== BEST TRAIN PARAMS =====")
+    for key, value in best_params.items():
+        print(f"{key}: {value}")
+
+    test_bt = Backtest(
+        test_df,
+        EMARSIMomentumStrategy,
+        cash=100000,
+        commission=0.001,
+        exclusive_orders=True,
+        finalize_trades=True
+    )
+    test_stats = test_bt.run(**best_params)
+
+    print_core_metrics("IN-SAMPLE (70%)", train_stats)
+    print_core_metrics("OUT-OF-SAMPLE (30%)", test_stats)
+
+    wf_df = run_walk_forward(df)
+    print_walk_forward_summary(wf_df)
+
+    # Plot only the out-of-sample run for cleaner review.
+    test_bt.plot()
+
+
+if __name__ == "__main__":
+    main()
