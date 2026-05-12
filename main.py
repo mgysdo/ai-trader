@@ -4,6 +4,7 @@ import pandas_ta as ta
 import requests
 import time
 import os
+import csv
 from dotenv import load_dotenv
 
 from datetime import UTC, datetime, timedelta
@@ -35,13 +36,15 @@ COOLDOWN_MINUTES = 30
 
 # Live-readiness mode: simulate trades until results are stable.
 PAPER_TRADING = True
-DAILY_TARGET_USD = 20.0
-DAILY_MAX_LOSS_USD = 20.0
-RISK_PER_TRADE_USD = 5.0
+# $1000 account safety defaults.
+DAILY_TARGET_USD = 8.0
+DAILY_MAX_LOSS_USD = 10.0
+RISK_PER_TRADE_USD = 2.5
 RR_RATIO = 2.5
 ATR_PERCENT_MIN = 0.4
 COMMISSION_RATE = 0.001
 SLIPPAGE_RATE = 0.0005
+TRADES_CSV_FILE = "trades.csv"
 
 paper_positions = {}
 daily_pnl_usd = 0.0
@@ -187,6 +190,22 @@ def update_paper_position(symbol, current_price):
         f"NetPnL=${pnl:.2f} DailyPnL=${daily_pnl_usd:.2f}"
     )
 
+    # Log trade to CSV
+    log_trade_to_csv(
+        timestamp=datetime.now(UTC).isoformat(),
+        symbol=symbol,
+        side=side,
+        entry_price=entry,
+        sl=sl,
+        tp=tp,
+        exit_price=exit_price,
+        exit_reason=exit_reason,
+        qty=qty,
+        gross_pnl=gross_pnl,
+        fees_slippage=fees + slippage,
+        net_pnl=pnl
+    )
+
     del paper_positions[symbol]
     check_daily_guardrails()
 
@@ -204,6 +223,50 @@ def send_telegram_message(message):
     }
 
     requests.post(url, data=payload, timeout=10)
+
+
+def initialize_trades_csv():
+    """Create trades.csv with headers if it doesn't exist."""
+    if not os.path.exists(TRADES_CSV_FILE):
+        with open(TRADES_CSV_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                "timestamp",
+                "symbol",
+                "side",
+                "entry_price",
+                "sl",
+                "tp",
+                "exit_price",
+                "exit_reason",
+                "qty",
+                "gross_pnl",
+                "fees_slippage",
+                "net_pnl"
+            ])
+
+
+def log_trade_to_csv(timestamp, symbol, side, entry_price, sl, tp, exit_price, exit_reason, qty, gross_pnl, fees_slippage, net_pnl):
+    """Append a completed trade to trades.csv."""
+    try:
+        with open(TRADES_CSV_FILE, "a", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow([
+                timestamp,
+                symbol,
+                side,
+                f"{entry_price:.2f}",
+                f"{sl:.2f}",
+                f"{tp:.2f}",
+                f"{exit_price:.2f}",
+                exit_reason,
+                f"{qty:.6f}",
+                f"{gross_pnl:.2f}",
+                f"{fees_slippage:.2f}",
+                f"{net_pnl:.2f}"
+            ])
+    except Exception as e:
+        print(f"Error logging trade to CSV: {e}")
 
 
 def scan_market(symbol):
@@ -425,6 +488,9 @@ def scan_market(symbol):
 
         last_signals[symbol] = signal
         last_signal_times[symbol] = datetime.now(UTC)
+
+# Initialize CSV file
+initialize_trades_csv()
 
 # Continuous scanner loop
 while True:
