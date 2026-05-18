@@ -41,9 +41,13 @@ DAILY_TARGET_USD = 8.0
 DAILY_MAX_LOSS_USD = 10.0
 RISK_PER_TRADE_USD = 2.5
 RR_RATIO = 2.5
-ATR_PERCENT_MIN = 0.4
+ATR_PERCENT_MIN = 0.5
 COMMISSION_RATE = 0.001
 SLIPPAGE_RATE = 0.0005
+LONG_RSI_LOW = 50
+LONG_RSI_HIGH = 70
+SHORT_RSI_LOW = 20
+SHORT_RSI_HIGH = 60
 TRADES_CSV_FILE = "trades.csv"
 
 paper_positions = {}
@@ -380,7 +384,7 @@ def scan_market(symbol):
         latest["EMA9"] > latest["EMA21"]
         and latest["close"] > latest["EMA21"]
         and latest["EMA21"] > slow_ema_prev
-        and 60 <= latest["RSI"] <= 70
+        and LONG_RSI_LOW <= latest["RSI"] <= LONG_RSI_HIGH
         and atr_percent >= ATR_PERCENT_MIN
         and higher_trend == "BULLISH"
     ):
@@ -391,6 +395,24 @@ def scan_market(symbol):
 
         take_profit = (
             entry_price + (stop_distance * RR_RATIO)
+        )
+
+    # SHORT setup
+    elif (
+        latest["EMA9"] < latest["EMA21"]
+        and latest["close"] < latest["EMA21"]
+        and latest["EMA21"] < slow_ema_prev
+        and SHORT_RSI_LOW <= latest["RSI"] <= SHORT_RSI_HIGH
+        and atr_percent >= ATR_PERCENT_MIN
+        and higher_trend == "BEARISH"
+    ):
+
+        signal = "SHORT"
+
+        stop_loss = entry_price + stop_distance
+
+        take_profit = (
+            entry_price - (stop_distance * RR_RATIO)
         )
 
     else:

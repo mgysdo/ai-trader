@@ -106,8 +106,10 @@ class EMARSIMomentumStrategy(Strategy):
     atr_percent_min = 0.5
 
     rr_ratio = 2
-    long_rsi_low = 60
+    long_rsi_low = 40
     long_rsi_high = 70
+    short_rsi_low = 30
+    short_rsi_high = 60
 
     def init(self):
 
@@ -204,7 +206,49 @@ class EMARSIMomentumStrategy(Strategy):
                 tp=take_profit
             )
 
-        # SHORT entry disabled for beginner long-only baseline.
+        # =========================
+        # SHORT ENTRY
+        # =========================
+
+        elif (
+            not self.position
+            and fastEMA < slowEMA
+            and price < slowEMA
+            and slowEMA < slowEMA_prev
+            and self.short_rsi_low <= rsi <= self.short_rsi_high
+        ):
+
+            stop_loss = price + (1.5 * atr)
+
+            risk_amount = self.equity * self.risk_per_trade
+
+            risk_per_unit = abs(stop_loss - price)
+
+            if risk_per_unit <= 0:
+                return
+
+            position_size = risk_amount / risk_per_unit
+
+            # Prevent margin issue
+            max_size = self.equity * 0.95 / price
+
+            position_size = min(
+                position_size,
+                max_size
+            )
+
+            position_size = max(1, int(position_size))
+
+            take_profit = price - (
+                (stop_loss - price)
+                * self.rr_ratio
+            )
+
+            self.sell(
+                size=position_size,
+                sl=stop_loss,
+                tp=take_profit
+            )
 
 
 # =========================
@@ -234,18 +278,22 @@ def optimize_train(train_dataset):
     )
 
     stats = bt.optimize(
-        long_rsi_low=range(56, 64, 2),
-        long_rsi_high=range(66, 76, 2),
-        atr_percent_min=[0.4, 0.5, 0.6],
-        rr_ratio=[1.5, 2.0, 2.5],
+        long_rsi_low=range(35, 55, 5),
+        long_rsi_high=range(65, 80, 5),
+        short_rsi_low=range(20, 35, 5),
+        short_rsi_high=range(55, 70, 5),
+        atr_percent_min=[0.3, 0.5],
+        rr_ratio=[2.0, 2.5],
         maximize="Return [%]",
-        constraint=lambda p: p.long_rsi_low < p.long_rsi_high,
+        constraint=lambda p: p.long_rsi_low < p.long_rsi_high and p.short_rsi_low < p.short_rsi_high,
         return_heatmap=False
     )
 
     best = {
         "long_rsi_low": stats["_strategy"].long_rsi_low,
         "long_rsi_high": stats["_strategy"].long_rsi_high,
+        "short_rsi_low": stats["_strategy"].short_rsi_low,
+        "short_rsi_high": stats["_strategy"].short_rsi_high,
         "atr_percent_min": stats["_strategy"].atr_percent_min,
         "rr_ratio": stats["_strategy"].rr_ratio,
     }
