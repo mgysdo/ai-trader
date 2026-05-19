@@ -645,10 +645,12 @@ def scan_market(state: BotState, df: pd.DataFrame):
 def main():
     initialize_trades_csv()
     state = BotState()
-    print(
+    startup_msg = (
         f"EUR/USD paper bot started | source={DATA_SOURCE} symbol={instrument_symbol()} "
         f"interval={FAST_INTERVAL}/{SLOW_INTERVAL} paper={PAPER_TRADING}"
     )
+    print(startup_msg)
+    send_telegram_message(startup_msg)
 
     while True:
         try:
