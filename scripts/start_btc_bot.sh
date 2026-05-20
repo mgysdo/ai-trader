@@ -7,12 +7,21 @@ LOG_DIR="$ROOT_DIR/logs"
 PID_DIR="$ROOT_DIR/run"
 LOG_FILE="$LOG_DIR/btc_bot.log"
 PID_FILE="$PID_DIR/btc_bot.pid"
+SCRIPT_PATH="$ROOT_DIR/main.py"
+PROC_PATTERN="$VENV_PYTHON $SCRIPT_PATH"
 
 mkdir -p "$LOG_DIR" "$PID_DIR"
 
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
   echo "BTC bot is already running with PID $(cat "$PID_FILE")"
   exit 0
+fi
+
+if pgrep -f "$PROC_PATTERN" >/dev/null 2>&1; then
+  echo "BTC bot process already exists outside PID tracking:"
+  pgrep -af "$PROC_PATTERN"
+  echo "Refusing to start a duplicate instance."
+  exit 1
 fi
 
 cd "$ROOT_DIR"
