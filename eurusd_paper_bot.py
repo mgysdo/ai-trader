@@ -42,14 +42,21 @@ LOOKBACK_PERIOD = "60d"
 NY = ZoneInfo("America/New_York")
 
 PAPER_TRADING = True
-COOLDOWN_MINUTES = 20
 SCAN_SECONDS = 300
 
 DAILY_TARGET_USD = 8.0
 DAILY_MAX_LOSS_USD = 10.0
 RISK_PER_TRADE_USD = 2.5
-RR_RATIO = 2.0
+RR_RATIO = 1.2
 ATR_BUFFER = 0.35
+BULL_RSI_MIN = 42
+BEAR_RSI_MAX = 62
+PENDING_TTL_BARS = 4
+MAX_HOLD_BARS = 12
+MIN_5M_SCORE = 2
+COOLDOWN_BARS = 16
+MIN_RISK_SPREAD_MULT = 2.0
+ASSUMED_SPREAD = 0.00006
 
 TRADES_CSV_FILE = "eurusd_trades.csv"
 
@@ -393,6 +400,8 @@ class BotState:
     pending_stop: float = np.nan
     pending_take_profit: float = np.nan
     pending_ttl: int = 0
+    trade_bars: int = 0
+    last_entry_bar_index: int = -10_000
 
 
 def reset_daily_state_if_needed(state: BotState):
@@ -438,35 +447,16 @@ def check_daily_guardrails(state: BotState):
         send_telegram_message(msg)
 
 
-def update_paper_position(state: BotState, current_price: float):
+def close_paper_position(state: BotState, exit_price: float, exit_reason: str):
     symbol = instrument_symbol()
     position = state.position
     if not position:
         return
 
-    exit_price = None
-    exit_reason = None
-    if position.side == "LONG":
-        if current_price <= position.sl:
-            exit_price = position.sl
-            exit_reason = "SL"
-        elif current_price >= position.tp:
-            exit_price = position.tp
-            exit_reason = "TP"
-    else:
-        if current_price >= position.sl:
-            exit_price = position.sl
-            exit_reason = "SL"
-        elif current_price <= position.tp:
-            exit_price = position.tp
-            exit_reason = "TP"
-
-    if exit_price is None:
-        return
-
     # Clear the position immediately to prevent duplicate notifications if
     # any subsequent I/O (logging, Telegram) raises an exception.
     state.position = None
+    state.trade_bars = 0
 
     gross_pnl = (exit_price - position.entry) * position.qty if position.side == "LONG" else (position.entry - exit_price) * position.qty
     notional_entry = abs(position.entry * position.qty)
@@ -506,9 +496,36 @@ def update_paper_position(state: BotState, current_price: float):
     check_daily_guardrails(state)
 
 
+def update_paper_position(state: BotState, current_price: float):
+    position = state.position
+    if not position:
+        return
+
+    exit_price = None
+    exit_reason = None
+    if position.side == "LONG":
+        if current_price <= position.sl:
+            exit_price = position.sl
+            exit_reason = "SL"
+        elif current_price >= position.tp:
+            exit_price = position.tp
+            exit_reason = "TP"
+    else:
+        if current_price >= position.sl:
+            exit_price = position.sl
+            exit_reason = "SL"
+        elif current_price <= position.tp:
+            exit_price = position.tp
+            exit_reason = "TP"
+
+    if exit_price is not None:
+        close_paper_position(state, exit_price, exit_reason)
+
+
 def scan_market(state: BotState, df: pd.DataFrame):
     symbol = instrument_symbol()
     latest = df.iloc[-1]
+    bar_idx = len(df) - 1
     latest_close_time = int(latest.name.value // 10**9)
     if state.last_processed_close_time == latest_close_time:
         return
@@ -516,7 +533,13 @@ def scan_market(state: BotState, df: pd.DataFrame):
 
     update_paper_position(state, latest["close"])
 
-    if state.trading_paused or state.position:
+    if state.trading_paused:
+        return
+
+    if state.position:
+        state.trade_bars += 1
+        if state.trade_bars >= MAX_HOLD_BARS:
+            close_paper_position(state, latest["close"], "TIME")
         return
 
     if state.pending_ttl > 0:
@@ -531,6 +554,7 @@ def scan_market(state: BotState, df: pd.DataFrame):
     high = latest["high"]
     low = latest["low"]
     atr_value = latest["atr14"]
+    min_risk_distance = max(ASSUMED_SPREAD * MIN_RISK_SPREAD_MULT, 1e-5)
     rsi_value = latest["rsi14"]
     trend_bullish = bool(latest["trend_bullish"])
     trend_bearish = bool(latest["trend_bearish"])
@@ -554,66 +578,58 @@ def scan_market(state: BotState, df: pd.DataFrame):
 
     bullish_5m_score = int(bullish_impulse) + int(ema9 > ema21) + int(rsi14_5m >= 45)
     bearish_5m_score = int(bearish_impulse) + int(ema9 < ema21) + int(rsi14_5m <= 55)
-    bullish_5m_confirmation = bullish_5m_score >= 1
-    bearish_5m_confirmation = bearish_5m_score >= 1
+    bullish_5m_confirmation = bullish_5m_score >= MIN_5M_SCORE
+    bearish_5m_confirmation = bearish_5m_score >= MIN_5M_SCORE
+    cooldown_active = (bar_idx - state.last_entry_bar_index) < COOLDOWN_BARS
 
     sweep_below_day = not np.isnan(day_low) and low < day_low
     sweep_above_day = not np.isnan(day_high) and high > day_high
 
     bullish_setup = (
         trend_bullish
-        and sweep_below_day
         and not np.isnan(fib_618)
         and not np.isnan(fib_786)
         and low <= fib_618
         and high >= fib_786
         and price > fib_618
-        and rsi_value >= 40
+        and rsi_value >= BULL_RSI_MIN
     )
 
     bearish_setup = (
         trend_bearish
-        and sweep_above_day
         and not np.isnan(fib_618)
         and not np.isnan(fib_786)
         and low <= fib_786
         and high >= fib_618
         and price < fib_618
-        and rsi_value <= 60
+        and rsi_value <= BEAR_RSI_MAX
     )
 
-    if bullish_setup:
-        state.pending_direction = "LONG"
-        state.pending_stop = min(low, day_low if not np.isnan(day_low) else low, leg_low) - atr_value * ATR_BUFFER
+    if state.pending_direction == "LONG" and bullish_5m_confirmation and not cooldown_active:
         risk = price - state.pending_stop
-        if risk > 0:
-            state.pending_take_profit = price + risk * RR_RATIO
-            state.pending_ttl = 4
-
-    elif bearish_setup:
-        state.pending_direction = "SHORT"
-        state.pending_stop = max(high, day_high if not np.isnan(day_high) else high, leg_high) + atr_value * ATR_BUFFER
-        risk = state.pending_stop - price
-        if risk > 0:
-            state.pending_take_profit = price - risk * RR_RATIO
-            state.pending_ttl = 4
-
-    if state.pending_direction == "LONG" and bullish_5m_confirmation:
-        risk = price - state.pending_stop
-        if risk > 0:
+        if risk > min_risk_distance:
+            tp = price + risk * RR_RATIO
+            if not (state.pending_stop < price < tp):
+                state.pending_direction = None
+                state.pending_stop = np.nan
+                state.pending_take_profit = np.nan
+                state.pending_ttl = 0
+                return
             qty = max(1, RISK_PER_TRADE_USD / risk)
             state.position = PaperPosition(
                 side="LONG",
                 entry=price,
                 sl=state.pending_stop,
-                tp=state.pending_take_profit,
+                tp=tp,
                 qty=qty,
                 opened_at=datetime.now(UTC),
             )
             state.daily_trade_entries += 1
             state.last_signal = "LONG"
             state.last_signal_time = datetime.now(UTC)
-            msg = f"PAPER ENTRY {symbol} LONG Entry={price:.5f} SL={state.pending_stop:.5f} TP={state.pending_take_profit:.5f} Qty={qty:.2f}"
+            state.last_entry_bar_index = bar_idx
+            state.trade_bars = 0
+            msg = f"PAPER ENTRY {symbol} LONG Entry={price:.5f} SL={state.pending_stop:.5f} TP={tp:.5f} Qty={qty:.2f}"
             print(msg)
             send_telegram_message(msg)
         state.pending_direction = None
@@ -621,28 +637,58 @@ def scan_market(state: BotState, df: pd.DataFrame):
         state.pending_take_profit = np.nan
         state.pending_ttl = 0
 
-    elif state.pending_direction == "SHORT" and bearish_5m_confirmation:
+    if state.pending_direction == "SHORT" and bearish_5m_confirmation and not cooldown_active:
         risk = state.pending_stop - price
-        if risk > 0:
+        if risk > min_risk_distance:
+            tp = price - risk * RR_RATIO
+            if not (tp < price < state.pending_stop):
+                state.pending_direction = None
+                state.pending_stop = np.nan
+                state.pending_take_profit = np.nan
+                state.pending_ttl = 0
+                return
             qty = max(1, RISK_PER_TRADE_USD / risk)
             state.position = PaperPosition(
                 side="SHORT",
                 entry=price,
                 sl=state.pending_stop,
-                tp=state.pending_take_profit,
+                tp=tp,
                 qty=qty,
                 opened_at=datetime.now(UTC),
             )
             state.daily_trade_entries += 1
             state.last_signal = "SHORT"
             state.last_signal_time = datetime.now(UTC)
-            msg = f"PAPER ENTRY {symbol} SHORT Entry={price:.5f} SL={state.pending_stop:.5f} TP={state.pending_take_profit:.5f} Qty={qty:.2f}"
+            state.last_entry_bar_index = bar_idx
+            state.trade_bars = 0
+            msg = f"PAPER ENTRY {symbol} SHORT Entry={price:.5f} SL={state.pending_stop:.5f} TP={tp:.5f} Qty={qty:.2f}"
             print(msg)
             send_telegram_message(msg)
         state.pending_direction = None
         state.pending_stop = np.nan
         state.pending_take_profit = np.nan
         state.pending_ttl = 0
+
+    if state.pending_direction is None:
+        if bullish_setup:
+            state.pending_direction = "LONG"
+            state.pending_stop = min(low, day_low if not np.isnan(day_low) else low, leg_low) - atr_value * ATR_BUFFER
+            risk = price - state.pending_stop
+            if risk > min_risk_distance:
+                state.pending_take_profit = price + risk * RR_RATIO
+                state.pending_ttl = PENDING_TTL_BARS
+            else:
+                state.pending_direction = None
+
+        elif bearish_setup:
+            state.pending_direction = "SHORT"
+            state.pending_stop = max(high, day_high if not np.isnan(day_high) else high, leg_high) + atr_value * ATR_BUFFER
+            risk = state.pending_stop - price
+            if risk > min_risk_distance:
+                state.pending_take_profit = price - risk * RR_RATIO
+                state.pending_ttl = PENDING_TTL_BARS
+            else:
+                state.pending_direction = None
 
 
 def main():
