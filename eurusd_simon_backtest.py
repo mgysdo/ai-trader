@@ -19,6 +19,8 @@ TICKER = "EURUSD=X"
 INTERVAL = "15m"
 PERIOD = "60d"
 LOWER_INTERVAL = "5m"
+BACKTEST_COMMISSION = 0.00002
+BACKTEST_SPREAD = 0.00006
 NY = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
@@ -231,6 +233,24 @@ def build_structure(df):
     return pd.concat([df, structure], axis=1)
 
 
+def build_daily_bias(df_15m):
+    daily = df_15m[["close"]].resample("1D").last().dropna().copy()
+    daily["daily_ema_fast"] = ema(daily["close"], 3)
+    daily["daily_ema_slow"] = ema(daily["close"], 8)
+    daily["daily_ema_slope"] = daily["daily_ema_fast"].diff()
+    daily["daily_bullish"] = (
+        (daily["daily_ema_fast"] > daily["daily_ema_slow"])
+        & (daily["daily_ema_slope"] > 0)
+    ).astype(int)
+    daily["daily_bearish"] = (
+        (daily["daily_ema_fast"] < daily["daily_ema_slow"])
+        & (daily["daily_ema_slope"] < 0)
+    ).astype(int)
+    # Shift by one daily bar to avoid lookahead bias.
+    daily = daily.shift(1)
+    return daily[["daily_bullish", "daily_bearish"]]
+
+
 def build_lower_timeframe_confirmation(df_5m):
     df = df_5m.copy()
     df["ema9_5m"] = ema(df["close"], 9)
@@ -240,13 +260,13 @@ def build_lower_timeframe_confirmation(df_5m):
         (df["ema9_5m"] > df["ema21_5m"])
         & (df["close"] > df["ema21_5m"])
         & (df["close"] > df["open"])
-        & (df["rsi14_5m"] >= 50)
+        & (df["rsi14_5m"] >= 45)
     ).astype(int)
     df["bearish_impulse_5m"] = (
         (df["ema9_5m"] < df["ema21_5m"])
         & (df["close"] < df["ema21_5m"])
         & (df["close"] < df["open"])
-        & (df["rsi14_5m"] <= 50)
+        & (df["rsi14_5m"] <= 55)
     ).astype(int)
 
     lower_15m = (
@@ -272,6 +292,7 @@ def prepare_data():
     lower_confirmation = build_lower_timeframe_confirmation(df_5m)
     df_15m = build_liquidity_levels(df_15m)
     df_15m = build_structure(df_15m)
+    daily_bias = build_daily_bias(df_15m)
     df_15m = pd.merge_asof(
         df_15m.sort_index(),
         lower_confirmation.sort_index(),
@@ -279,7 +300,28 @@ def prepare_data():
         right_index=True,
         direction="backward",
     )
-    df = df_15m.dropna(subset=["open", "high", "low", "close", "ema20", "ema50", "rsi14", "atr14", "ema9_5m", "ema21_5m", "rsi14_5m"])
+    df_15m = pd.merge_asof(
+        df_15m.sort_index(),
+        daily_bias.sort_index(),
+        left_index=True,
+        right_index=True,
+        direction="backward",
+    )
+    df = df_15m.dropna(subset=[
+        "open",
+        "high",
+        "low",
+        "close",
+        "ema20",
+        "ema50",
+        "rsi14",
+        "atr14",
+        "ema9_5m",
+        "ema21_5m",
+        "rsi14_5m",
+        "daily_bullish",
+        "daily_bearish",
+    ])
     df = df.rename(columns={
         "open": "Open",
         "high": "High",
@@ -292,20 +334,41 @@ def prepare_data():
 
 class SimonEURUSDStrategy(Strategy):
     risk_per_trade = 0.0025
-    rr_ratio = 2.0
+    rr_ratio = 1.2
     atr_buffer = 0.35
+    bull_rsi_min = 42
+    bear_rsi_max = 62
+    pending_ttl_bars = 4
+    max_hold_bars = 12
+    min_5m_score = 2
+    cooldown_bars = 16
+    min_risk_spread_mult = 2.0
+    require_daily_bias = False
+
+    def finalize(self):
+        # Force-close any open position at the end of the backtest
+        if self.position:
+            self.position.close()
 
     def init(self):
         self.pending_direction = None
         self.pending_stop = np.nan
         self.pending_take_profit = np.nan
         self.pending_ttl = 0
-
-    def _is_end_of_day(self):
-        current = self.data.index[-1].tz_convert(NY).time()
-        return current >= time(16, 55)
+        self.trade_bars = 0  # Track bars since entry
+        self.last_entry_bar = -10_000
+        self.c_total = 0
+        self.c_trend = 0
+        self.c_sweep = 0
+        self.c_fib_valid = 0
+        self.c_fib_zone = 0
+        self.c_rsi = 0
+        self.c_setup = 0
+        self.c_entry = 0
 
     def next(self):
+        bar_idx = len(self.data) - 1
+        min_risk_distance = max(BACKTEST_SPREAD * self.min_risk_spread_mult, 1e-5)
         price = self.data.Close[-1]
         open_ = self.data.Open[-1]
         high = self.data.High[-1]
@@ -314,14 +377,14 @@ class SimonEURUSDStrategy(Strategy):
         rsi_value = self.data.rsi14[-1]
         trend_bullish = bool(self.data.trend_bullish[-1])
         trend_bearish = bool(self.data.trend_bearish[-1])
+        daily_bullish = bool(self.data.daily_bullish[-1])
+        daily_bearish = bool(self.data.daily_bearish[-1])
         fib_618 = self.data.fib_618[-1]
         fib_786 = self.data.fib_786[-1]
         leg_low = self.data.leg_low[-1]
         leg_high = self.data.leg_high[-1]
         day_low = self.data.day_low[-1]
         day_high = self.data.day_high[-1]
-        session_low = self.data.session_low[-1]
-        session_high = self.data.session_high[-1]
         ema9_5m = self.data.ema9_5m[-1]
         ema21_5m = self.data.ema21_5m[-1]
         rsi14_5m = self.data.rsi14_5m[-1]
@@ -333,9 +396,7 @@ class SimonEURUSDStrategy(Strategy):
         if np.isnan(atr_value) or np.isnan(rsi_value):
             return
 
-        if self.position and self._is_end_of_day():
-            self.position.close()
-            return
+        self.c_total += 1
 
         if np.isnan(leg_low) or np.isnan(leg_high) or leg_high <= leg_low:
             return
@@ -343,44 +404,66 @@ class SimonEURUSDStrategy(Strategy):
         if np.isnan(ema9_5m) or np.isnan(ema21_5m) or np.isnan(rsi14_5m):
             return
 
+        if self.require_daily_bias:
+            trend_bullish = trend_bullish and daily_bullish
+            trend_bearish = trend_bearish and daily_bearish
+
         sweep_below_day = not np.isnan(day_low) and low < day_low
-        sweep_below_session = not np.isnan(session_low) and low < session_low
         sweep_above_day = not np.isnan(day_high) and high > day_high
-        sweep_above_session = not np.isnan(session_high) and high > session_high
 
-        bullish_5m_confirmation = (
-            bullish_5m_score >= 1
-        )
+        trend_active = trend_bullish or trend_bearish
+        if trend_active:
+            self.c_trend += 1
 
-        bearish_5m_confirmation = (
-            bearish_5m_score >= 1
-        )
+        sweep_active = sweep_below_day or sweep_above_day
+        if trend_active and sweep_active:
+            self.c_sweep += 1
 
+        fib_valid = not np.isnan(fib_618) and not np.isnan(fib_786)
+        if trend_active and sweep_active and fib_valid:
+            self.c_fib_valid += 1
+
+        fib_zone_bull = fib_valid and low <= fib_618 and high >= fib_786
+        fib_zone_bear = fib_valid and low <= fib_786 and high >= fib_618
+        fib_zone = fib_zone_bull or fib_zone_bear
+        if trend_active and sweep_active and fib_zone:
+            self.c_fib_zone += 1
+
+        rsi_ok_bull = rsi_value >= self.bull_rsi_min and price > fib_618 if fib_valid else False
+        rsi_ok_bear = rsi_value <= self.bear_rsi_max and price < fib_618 if fib_valid else False
+        if trend_active and sweep_active and fib_zone and (rsi_ok_bull or rsi_ok_bear):
+            self.c_rsi += 1
+
+        bullish_5m_confirmation = bullish_5m_score >= self.min_5m_score
+        bearish_5m_confirmation = bearish_5m_score >= self.min_5m_score
+        cooldown_active = (bar_idx - self.last_entry_bar) < self.cooldown_bars
+
+        # Manage currently open trade before considering any new setup.
         if self.position:
+            self.trade_bars += 1
+            if self.trade_bars >= self.max_hold_bars:
+                self.position.close()
+                self.trade_bars = 0
             return
 
         bullish_retrace = (
             trend_bullish
-            and (sweep_below_day or sweep_below_session)
             and not np.isnan(fib_618)
             and not np.isnan(fib_786)
             and low <= fib_618
             and high >= fib_786
             and price > fib_618
-            and rsi_value >= 40
-            and bullish_5m_confirmation
+            and rsi_value >= self.bull_rsi_min
         )
 
         bearish_retrace = (
             trend_bearish
-            and (sweep_above_day or sweep_above_session)
             and not np.isnan(fib_618)
             and not np.isnan(fib_786)
             and low <= fib_786
             and high >= fib_618
             and price < fib_618
-            and rsi_value <= 60
-            and bearish_5m_confirmation
+            and rsi_value <= self.bear_rsi_max
         )
 
         if self.pending_ttl > 0:
@@ -390,61 +473,78 @@ class SimonEURUSDStrategy(Strategy):
                 self.pending_stop = np.nan
                 self.pending_take_profit = np.nan
 
-        if bullish_retrace:
-            self.pending_direction = "LONG"
-            self.pending_stop = min(
-                low,
-                day_low if not np.isnan(day_low) else low,
-                session_low if not np.isnan(session_low) else low,
-                leg_low,
-            ) - atr_value * self.atr_buffer
+        if self.pending_direction == "LONG" and bullish_5m_confirmation and not cooldown_active:
             risk = price - self.pending_stop
-            if risk > 0:
-                self.pending_take_profit = price + risk * self.rr_ratio
-                self.pending_ttl = 4
-            return
-
-        if bearish_retrace:
-            self.pending_direction = "SHORT"
-            self.pending_stop = max(
-                high,
-                day_high if not np.isnan(day_high) else high,
-                session_high if not np.isnan(session_high) else high,
-                leg_high,
-            ) + atr_value * self.atr_buffer
-            risk = self.pending_stop - price
-            if risk > 0:
-                self.pending_take_profit = price - risk * self.rr_ratio
-                self.pending_ttl = 4
-            return
-
-        if self.pending_direction == "LONG" and bullish_5m_confirmation:
-            risk = price - self.pending_stop
-            if risk <= 0:
+            if risk <= min_risk_distance:
+                self.pending_direction = None
+                return
+            tp = price + risk * self.rr_ratio
+            if not (self.pending_stop < price < tp):
                 self.pending_direction = None
                 return
             size = max(1, int((self.equity * self.risk_per_trade) / risk))
-            self.buy(size=size, sl=self.pending_stop, tp=self.pending_take_profit)
+            self.buy(size=size, sl=self.pending_stop, tp=tp)
+            self.c_entry += 1
+            self.last_entry_bar = bar_idx
             self.pending_direction = None
             self.pending_stop = np.nan
             self.pending_take_profit = np.nan
             self.pending_ttl = 0
+            self.trade_bars = 0  # Start bar count for time exit
+
+        if self.pending_direction is None:
+            if bullish_retrace or bearish_retrace:
+                self.c_setup += 1
+
+            if bullish_retrace:
+                self.pending_direction = "LONG"
+                self.pending_stop = min(
+                    low,
+                    day_low if not np.isnan(day_low) else low,
+                    leg_low,
+                ) - atr_value * self.atr_buffer
+                risk = price - self.pending_stop
+                if risk > min_risk_distance:
+                    self.pending_take_profit = price + risk * self.rr_ratio
+                    self.pending_ttl = self.pending_ttl_bars
+                else:
+                    self.pending_direction = None
+
+            elif bearish_retrace:
+                self.pending_direction = "SHORT"
+                self.pending_stop = max(
+                    high,
+                    day_high if not np.isnan(day_high) else high,
+                    leg_high,
+                ) + atr_value * self.atr_buffer
+                risk = self.pending_stop - price
+                if risk > min_risk_distance:
+                    self.pending_take_profit = price - risk * self.rr_ratio
+                    self.pending_ttl = self.pending_ttl_bars
+                else:
+                    self.pending_direction = None
             return
 
-        if self.pending_direction == "SHORT" and bearish_5m_confirmation:
+        if self.pending_direction == "SHORT" and bearish_5m_confirmation and not cooldown_active:
             risk = self.pending_stop - price
-            if risk <= 0:
+            if risk <= min_risk_distance:
+                self.pending_direction = None
+                return
+            tp = price - risk * self.rr_ratio
+            if not (tp < price < self.pending_stop):
                 self.pending_direction = None
                 return
             size = max(1, int((self.equity * self.risk_per_trade) / risk))
-            self.sell(size=size, sl=self.pending_stop, tp=self.pending_take_profit)
+            self.sell(size=size, sl=self.pending_stop, tp=tp)
+            self.c_entry += 1
+            self.last_entry_bar = bar_idx
             self.pending_direction = None
             self.pending_stop = np.nan
             self.pending_take_profit = np.nan
             self.pending_ttl = 0
+            self.trade_bars = 0  # Start bar count for time exit
 
-
-def print_metrics(stats):
+def print_metrics(stats, strategy_instance=None):
     print("\n===== EUR/USD SIMON STRATEGY =====")
     print(f"Return [%]: {stats['Return [%]']:.5f}")
     print(f"Buy & Hold Return [%]: {stats['Buy & Hold Return [%]']:.5f}")
@@ -452,6 +552,17 @@ def print_metrics(stats):
     print(f"# Trades: {int(stats['# Trades'])}")
     print(f"Win Rate [%]: {stats['Win Rate [%]']:.2f}")
     print(f"Profit Factor: {stats['Profit Factor']:.5f}")
+    if strategy_instance is not None:
+        s = strategy_instance
+        print("\n===== CONDITION FUNNEL =====")
+        print(f"Bars evaluated (valid indicators):  {s.c_total}")
+        print(f"  + trend active:                   {s.c_trend}")
+        print(f"  + day sweep:                      {s.c_sweep}")
+        print(f"  + fib levels valid:               {s.c_fib_valid}")
+        print(f"  + bar spans fib zone:             {s.c_fib_zone}")
+        print(f"  + RSI + close filter:             {s.c_rsi}")
+        print(f"  = setup bars:                     {s.c_setup}")
+        print(f"  = entries executed:               {s.c_entry}")
 
 
 def main():
@@ -461,12 +572,13 @@ def main():
         data,
         SimonEURUSDStrategy,
         cash=100000,
-        commission=0.0,
-        exclusive_orders=True,
+        commission=BACKTEST_COMMISSION,
+        spread=BACKTEST_SPREAD,
+        exclusive_orders=False,
         finalize_trades=True,
     )
     stats = bt.run()
-    print_metrics(stats)
+    print_metrics(stats, stats._strategy)
 
 
 if __name__ == "__main__":
