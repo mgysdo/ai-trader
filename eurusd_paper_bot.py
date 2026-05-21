@@ -57,8 +57,24 @@ MIN_5M_SCORE = 2
 COOLDOWN_BARS = 16
 MIN_RISK_SPREAD_MULT = 2.0
 ASSUMED_SPREAD = 0.00006
+PIP_SIZE = 0.0001
 
 TRADES_CSV_FILE = "eurusd_trades.csv"
+TRADES_CSV_HEADER = [
+    "timestamp",
+    "symbol",
+    "side",
+    "entry_price",
+    "sl",
+    "tp",
+    "exit_price",
+    "exit_reason",
+    "qty",
+    "gross_pnl",
+    "fees_slippage",
+    "net_pnl",
+    "pips",
+]
 
 if BINANCE_API_KEY and BINANCE_API_SECRET:
     binance_client = Client(BINANCE_API_KEY, BINANCE_API_SECRET)
@@ -184,26 +200,33 @@ def send_telegram_message(message: str):
 
 
 def initialize_trades_csv():
-    if os.path.exists(TRADES_CSV_FILE):
+    if not os.path.exists(TRADES_CSV_FILE):
+        with open(TRADES_CSV_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(TRADES_CSV_HEADER)
         return
+
+    with open(TRADES_CSV_FILE, newline="") as f:
+        rows = list(csv.reader(f))
+
+    if not rows:
+        with open(TRADES_CSV_FILE, "w", newline="") as f:
+            writer = csv.writer(f)
+            writer.writerow(TRADES_CSV_HEADER)
+        return
+
+    header = rows[0]
+    if "pips" in header:
+        return
+
+    rows[0] = header + ["pips"]
+    for i in range(1, len(rows)):
+        if len(rows[i]) < len(rows[0]):
+            rows[i].append("")
+
     with open(TRADES_CSV_FILE, "w", newline="") as f:
         writer = csv.writer(f)
-        writer.writerow(
-            [
-                "timestamp",
-                "symbol",
-                "side",
-                "entry_price",
-                "sl",
-                "tp",
-                "exit_price",
-                "exit_reason",
-                "qty",
-                "gross_pnl",
-                "fees_slippage",
-                "net_pnl",
-            ]
-        )
+        writer.writerows(rows)
 
 
 def log_trade_to_csv(
@@ -219,6 +242,7 @@ def log_trade_to_csv(
     gross_pnl,
     fees_slippage,
     net_pnl,
+    pips,
 ):
     with open(TRADES_CSV_FILE, "a", newline="") as f:
         writer = csv.writer(f)
@@ -236,6 +260,7 @@ def log_trade_to_csv(
                 f"{gross_pnl:.2f}",
                 f"{fees_slippage:.2f}",
                 f"{net_pnl:.2f}",
+                f"{pips:.2f}",
             ]
         )
 
@@ -386,6 +411,7 @@ class PaperPosition:
 @dataclass
 class BotState:
     daily_pnl_usd: float = 0.0
+    daily_pips: float = 0.0
     daily_date: datetime.date = field(default_factory=lambda: datetime.now(UTC).date())
     trading_paused: bool = False
     daily_trade_entries: int = 0
@@ -412,6 +438,7 @@ def reset_daily_state_if_needed(state: BotState):
     summary = (
         f"DAILY SUMMARY {state.daily_date} UTC\n"
         f"Net PnL: ${state.daily_pnl_usd:.2f}\n"
+        f"Net Pips: {state.daily_pips:.2f}\n"
         f"Entries: {state.daily_trade_entries}\n"
         f"Exits: {state.daily_trade_exits}\n"
         f"Wins: {state.daily_win_trades}\n"
@@ -424,6 +451,7 @@ def reset_daily_state_if_needed(state: BotState):
 
     state.daily_date = today
     state.daily_pnl_usd = 0.0
+    state.daily_pips = 0.0
     state.trading_paused = False
     state.daily_trade_entries = 0
     state.daily_trade_exits = 0
@@ -459,6 +487,8 @@ def close_paper_position(state: BotState, exit_price: float, exit_reason: str):
     state.trade_bars = 0
 
     gross_pnl = (exit_price - position.entry) * position.qty if position.side == "LONG" else (position.entry - exit_price) * position.qty
+    direction = 1.0 if position.side == "LONG" else -1.0
+    pips = ((exit_price - position.entry) * direction) / PIP_SIZE
     notional_entry = abs(position.entry * position.qty)
     notional_exit = abs(exit_price * position.qty)
     fees = (notional_entry + notional_exit) * 0.001
@@ -466,6 +496,7 @@ def close_paper_position(state: BotState, exit_price: float, exit_reason: str):
     net_pnl = gross_pnl - fees - slippage
 
     state.daily_pnl_usd += net_pnl
+    state.daily_pips += pips
     state.daily_trade_exits += 1
     if net_pnl >= 0:
         state.daily_win_trades += 1
@@ -475,7 +506,7 @@ def close_paper_position(state: BotState, exit_price: float, exit_reason: str):
     msg = (
         f"PAPER EXIT {symbol} {position.side} {exit_reason} "
         f"Gross=${gross_pnl:.2f} Fees+Slip=${fees + slippage:.2f} "
-        f"NetPnL=${net_pnl:.2f} DailyPnL=${state.daily_pnl_usd:.2f}"
+        f"NetPnL=${net_pnl:.2f} Pips={pips:.2f} DailyPnL=${state.daily_pnl_usd:.2f} DailyPips={state.daily_pips:.2f}"
     )
     print(msg)
     send_telegram_message(msg)
@@ -492,6 +523,7 @@ def close_paper_position(state: BotState, exit_price: float, exit_reason: str):
         gross_pnl=gross_pnl,
         fees_slippage=fees + slippage,
         net_pnl=net_pnl,
+        pips=pips,
     )
     check_daily_guardrails(state)
 

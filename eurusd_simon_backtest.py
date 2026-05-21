@@ -21,6 +21,7 @@ PERIOD = "60d"
 LOWER_INTERVAL = "5m"
 BACKTEST_COMMISSION = 0.00002
 BACKTEST_SPREAD = 0.00006
+PIP_SIZE = 0.0001
 NY = ZoneInfo("America/New_York")
 UTC = ZoneInfo("UTC")
 
@@ -545,6 +546,15 @@ class SimonEURUSDStrategy(Strategy):
             self.trade_bars = 0  # Start bar count for time exit
 
 def print_metrics(stats, strategy_instance=None):
+    trades = stats["_trades"]
+    total_pips = np.nan
+    avg_pips = np.nan
+    if len(trades):
+        signed_direction = np.sign(trades["Size"].astype(float))
+        pip_series = ((trades["ExitPrice"] - trades["EntryPrice"]) * signed_direction) / PIP_SIZE
+        total_pips = float(pip_series.sum())
+        avg_pips = float(pip_series.mean())
+
     print("\n===== EUR/USD SIMON STRATEGY =====")
     print(f"Return [%]: {stats['Return [%]']:.5f}")
     print(f"Buy & Hold Return [%]: {stats['Buy & Hold Return [%]']:.5f}")
@@ -552,6 +562,12 @@ def print_metrics(stats, strategy_instance=None):
     print(f"# Trades: {int(stats['# Trades'])}")
     print(f"Win Rate [%]: {stats['Win Rate [%]']:.2f}")
     print(f"Profit Factor: {stats['Profit Factor']:.5f}")
+    if np.isnan(total_pips):
+        print("Total Pips: n/a")
+        print("Avg Pips/Trade: n/a")
+    else:
+        print(f"Total Pips: {total_pips:.2f}")
+        print(f"Avg Pips/Trade: {avg_pips:.2f}")
     if strategy_instance is not None:
         s = strategy_instance
         print("\n===== CONDITION FUNNEL =====")
