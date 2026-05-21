@@ -464,6 +464,10 @@ def update_paper_position(state: BotState, current_price: float):
     if exit_price is None:
         return
 
+    # Clear the position immediately to prevent duplicate notifications if
+    # any subsequent I/O (logging, Telegram) raises an exception.
+    state.position = None
+
     gross_pnl = (exit_price - position.entry) * position.qty if position.side == "LONG" else (position.entry - exit_price) * position.qty
     notional_entry = abs(position.entry * position.qty)
     notional_exit = abs(exit_price * position.qty)
@@ -499,7 +503,6 @@ def update_paper_position(state: BotState, current_price: float):
         fees_slippage=fees + slippage,
         net_pnl=net_pnl,
     )
-    state.position = None
     check_daily_guardrails(state)
 
 
