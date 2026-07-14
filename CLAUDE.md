@@ -63,12 +63,34 @@ CSV-parsed datetimes may not be ns-resolution; `astype("int64")` then yields
 NOT-nanoseconds and silently breaks epoch math. Convert via
 `.values.astype("datetime64[ns]")` first.
 
-## Roadmap
+## Deployment status (2026-07-14)
 
-1. Paper burn-in of the allocator (~2–4 weeks; mechanics check, not edge check).
+**Deployed and running** on the user's DigitalOcean droplet
+(`ubuntu-s-1vcpu-2gb-sgp1`, Ubuntu 24.04, repo at `/root/ai-trader`) as
+systemd service `ai-trader` (enabled = survives reboots, Restart=always).
+Runbook: [DEPLOY.md](DEPLOY.md). First check confirmed correct behavior:
+close 62,335 < buy trigger 72,130 → flat in USDT, $200 paper equity.
+The old nohup/PID bots on the droplet were already dead (stale PID files) —
+that silent-death fragility is why systemd is required.
+
+**Paper burn-in started 2026-07-14, runs ~2–4 weeks.** Success = uptime and
+correct mechanics (hourly heartbeats in `journalctl -u ai-trader`, reboot
+survival, correct switch + Telegram alert if a band crossing happens) — NOT
+P&L. Zero trades during burn-in is a PASS (BTC is far below the entry band).
+
+## Agreed gates to live trading (in order)
+
+1. Clean burn-in uptime record (~2–4 weeks from 2026-07-14).
 2. Implement live order path: python-binance, market orders, min-notional
-   (~$5 spot) checks, then go live with the $200.
-3. Grow capital externally; the engine scales as-is.
+   (~$5 spot) checks; live mode currently raises NotImplementedError.
+3. **Rotate Binance API keys before wiring real orders — non-negotiable.**
+   User chose to keep the exposed keys during paper phase (2026-07-14);
+   advised meanwhile: disable withdrawals + IP-restrict the key on Binance.
+4. Go live with the $200. Expectation set with user: ~1–3%/month average,
+   lumpy months, −50%+ historical drawdowns, possibly months in cash.
+   The #1 risk is abandoning the system mid-drawdown — remind, don't tinker.
+5. Grow capital externally ($500–1k/month goal needs ~$30–60k at 1–2%/month);
+   the engine scales as-is.
 
 ## Conventions
 
