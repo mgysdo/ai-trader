@@ -4,62 +4,78 @@ Guidance for Claude Code when working in this repository.
 
 ## Project
 
-Automated crypto trading bot. **Sole focus: trading BTC/USDT on Binance.**
-The EUR/USD "Simon" strategy was removed on 2026-07-14 — do not reintroduce it.
+Automated BTC/USDT trading bot on Binance. **Production strategy: daily trend
+allocator** — long BTC when the daily close > SMA(100)×1.02, fully in USDT
+when close < SMA(100)×0.98. Spot only, long-or-cash, no leverage, no shorting.
 
-**Goal:** a paper-proven, positive-expectancy BTC strategy. The user's stated
-target is $20/day on a ~$1,000 account (≈2%/day). Treat this as aspirational —
-see "Reality check" below. Prove a real edge and consistency first, scale later.
+User's long-term goal: $500–1k/month. That needs ~$30–60k capital at a
+realistic 1–2%/month — the plan is: prove the engine on $200, add external
+deposits over time. Do not entertain $/day targets on small capital.
 
-## Current state (2026-07-14)
+## Files
 
-- Live bot runs in **PAPER_TRADING** mode. Not live yet.
-- 1.5 months of paper trading produced only **3 trades, +$7.23 net total**
-  (~$0.16/day). The binding constraint is **trade frequency**, not win rate
-  (win rate so far is 2/3) or R:R.
-- **Known gap:** the live bot trades **5m candles with a 1h trend filter**, but
-  the only backtest ([backtest.py](backtest.py)) runs on **1h candles with no
-  1h filter**. They are different strategies — the backtest does not predict
-  live behavior. Closing this gap is the top priority.
+- [main.py](main.py) — the allocator bot. Paper mode ($200 start). Checks
+  hourly via public Binance REST, acts at most once per completed UTC daily
+  candle. State: `allocator_state.json` (survives restarts). Trades:
+  `allocator_trades.csv`. Telegram on switches. `--once` flag = single check
+  (cron/testing). Live mode raises NotImplementedError until paper burn-in
+  passes.
+- [trend_daily.py](trend_daily.py) — self-contained 9-year validation of the
+  strategy (keep; rerun after refetching data to re-verify).
+- [scripts/fetch_data.py](scripts/fetch_data.py) — Binance public klines →
+  `data/*.csv`. e.g. `--interval 1d --months 108`.
+- `data/BTCUSDT_1d.csv` — daily history 2017→2026 used by trend_daily.py.
+- `scripts/botctl.sh` — start|stop|restart|status|logs for the bot.
+- venv rebuilt 2026-07-14 (Homebrew python3); deps: requests, pandas, numpy,
+  python-dotenv only.
 
-## Key files
+## Evidence for the strategy (validated 2026-07-14, 9y of data, 4 regimes)
 
-- [main.py](main.py) — live/paper bot. Scans BTCUSDT 5m + 1h every 60s.
-  EMA9/EMA21 + RSI(14) + ATR(14) trend-following. 1h EMA trend must align.
-  ATR-based SL (1.5×ATR), fixed R:R take-profit. Fixed USD risk per trade.
-  Daily target/max-loss guardrails. Logs closed trades to `trades.csv`.
-- [backtest.py](backtest.py) — 1h backtest with walk-forward. **Does not match
-  the live 5m logic** (see gap above).
-- `trades.csv` — closed paper trades log.
-- `BTCUSDT_1h.csv` — historical 1h data used by the backtest.
-- `scripts/` — `botctl.sh` + start/stop wrappers (BTC-only after cleanup).
+All SMA lengths 50–200 beat buy&hold (14.6x, −83% DD): SMA50=61x/58.7% CAGR,
+SMA100=22x/41.6%, SMA150=12x/−49% DD, SMA200=6.3x. Hysteresis bands 0–3%
+tested: 2% halves switch count, keeps returns → chosen config SMA100+2%
+(mid-plateau, not hindsight-best). Cuts every bear year (2018: −43% vs −73%;
+2022: −50% vs −64%; 2026 YTD: −4.8% vs −28.5%). Expect ~2–4%/month **average**
+but lumpy: only ~35–42% of months positive, historical drawdowns −50%+.
+The #1 risk is abandoning the system mid-drawdown, not the code.
 
-## Strategy parameters (in main.py)
+## Graveyard — tested and conclusively dead (2026-07-14). Do NOT revisit.
 
-Risk $2.50/trade, R:R 2.5, ATR%_min 0.5, LONG RSI 50–70, SHORT RSI 20–60,
-30-min cooldown, daily target $8 / max loss $10. One open position at a time.
+Intraday BTC on OHLC candles, 12 months of real 5m/1h data, 70/30 train/test:
 
-## Reality check (keep the user honest)
+| Archetype | Variants | Profitable OOS |
+|---|---|---|
+| EMA9/21+RSI momentum 5m (the original bot) | 72 | 0 (0 even in-sample) |
+| Bollinger+RSI mean reversion 5m & 1h, long-only | 132 | 0 (0 even in-sample) |
+| Donchian breakout 5m & 1h, futures fees, both sides | 24 | 0 (6 in-sample, all collapsed) |
 
-- $20/day on $1,000 = ~730%/year compounded. Not sustainable for any real
-  strategy. Reset expectations toward ~$2–5/day proven over 100+ trades first.
-- Paper fills are optimistic (exact SL/TP, no wick-through/spread). Live is worse.
-- Only two honest levers for more profit: **trade more often** or **risk more
-  per trade**. On a single symbol, frequency comes from looser entries — which
-  must be validated in a *matching* backtest before going live.
+Structural lessons: (1) gross edge of these signals ≈ zero — fees only made it
+worse; (2) tight 5m stops + fixed-$ risk ⇒ large notional ⇒ ~0.15%/side costs
+put every trade ~1R down; (3) the original bot's 3 paper trades (2 wins) were
+pure noise — real win rate ~30%. Test window was a bear year (BTC −42%,
+2025-07→2026-07); benchmark any long-only result against that.
+Research scripts were removed in cleanup (results preserved above); old code
+recoverable via git history. Old EUR/USD "Simon" strategy also removed.
+
+## Pandas 3.0 gotcha
+
+CSV-parsed datetimes may not be ns-resolution; `astype("int64")` then yields
+NOT-nanoseconds and silently breaks epoch math. Convert via
+`.values.astype("datetime64[ns]")` first.
 
 ## Roadmap
 
-1. Housekeeping: strip EUR/USD from `scripts/`.
-2. `scripts/fetch_data.py`: pull real BTCUSDT 5m + 1h klines from Binance.
-3. A 5m backtest that mirrors [main.py](main.py) exactly (entries, 1h filter,
-   SL/TP, fees) → measure real win rate, frequency, profit factor.
-4. Tune entry filters from that evidence (frequency vs. profit factor).
-5. Set realistic sizing/target. Only then consider going live.
+1. Paper burn-in of the allocator (~2–4 weeks; mechanics check, not edge check).
+2. Implement live order path: python-binance, market orders, min-notional
+   (~$5 spot) checks, then go live with the $200.
+3. Grow capital externally; the engine scales as-is.
 
 ## Conventions
 
 - Never commit or push unless the user asks.
-- `.env` holds `BINANCE_API_KEY`/`BINANCE_API_SECRET` + Telegram creds. Never
+- `.env` holds Binance + Telegram creds. **`.env` is tracked in git history —
+  keys should be rotated and the file untracked (git rm --cached).** Never
   print or commit secrets.
-- Public Binance klines endpoints need no API keys — use them for backtesting data.
+- Public Binance endpoints need no keys — paper mode runs without secrets.
+- Any new strategy idea goes through the gauntlet before touching the bot:
+  real data → train/test split → profitable OOS (PF > ~1.3) → paper → live.
