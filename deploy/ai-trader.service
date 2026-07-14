@@ -1,0 +1,23 @@
+# systemd unit for the BTC daily trend allocator (paper mode).
+# Install (adjust paths if your clone lives elsewhere):
+#   sudo cp deploy/ai-trader.service /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now ai-trader
+# Logs: journalctl -fu ai-trader
+
+[Unit]
+Description=BTC daily trend allocator (paper)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/root/ai-trader
+ExecStart=/root/ai-trader/venv/bin/python -u main.py
+Restart=always
+RestartSec=60
+# Bot is lightweight: one HTTP request per hour.
+MemoryMax=512M
+
+[Install]
+WantedBy=multi-user.target
