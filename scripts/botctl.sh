@@ -5,30 +5,22 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 START_BTC="$ROOT_DIR/scripts/start_btc_bot.sh"
 STOP_BTC="$ROOT_DIR/scripts/stop_btc_bot.sh"
-START_EURUSD="$ROOT_DIR/scripts/start_eurusd_bot.sh"
-STOP_EURUSD="$ROOT_DIR/scripts/stop_eurusd_bot.sh"
 
 BTC_PID_FILE="$ROOT_DIR/run/btc_bot.pid"
-EURUSD_PID_FILE="$ROOT_DIR/run/eurusd_bot.pid"
 BTC_LOG_FILE="$ROOT_DIR/logs/btc_bot.log"
-EURUSD_LOG_FILE="$ROOT_DIR/logs/eurusd_bot.log"
 
 usage() {
   cat <<'EOF'
 Usage:
-  ./scripts/botctl.sh <action> <target>
+  ./scripts/botctl.sh <action>
 
 Actions:
   start | stop | restart | status | logs
 
-Targets:
-  btc | eurusd | all
-
 Examples:
-  ./scripts/botctl.sh start btc
-  ./scripts/botctl.sh stop all
-  ./scripts/botctl.sh status all
-  ./scripts/botctl.sh logs eurusd
+  ./scripts/botctl.sh start
+  ./scripts/botctl.sh status
+  ./scripts/botctl.sh logs
 EOF
 }
 
@@ -62,63 +54,19 @@ logs_one() {
   fi
 }
 
-if [[ $# -ne 2 ]]; then
+if [[ $# -ne 1 ]]; then
   usage
   exit 1
 fi
 
 ACTION="$1"
-TARGET="$2"
 
 case "$ACTION" in
-  start)
-    case "$TARGET" in
-      btc) "$START_BTC" ;;
-      eurusd) "$START_EURUSD" ;;
-      all) "$START_BTC" && "$START_EURUSD" ;;
-      *) usage; exit 1 ;;
-    esac
-    ;;
-  stop)
-    case "$TARGET" in
-      btc) "$STOP_BTC" ;;
-      eurusd) "$STOP_EURUSD" ;;
-      all) "$STOP_BTC" && "$STOP_EURUSD" ;;
-      *) usage; exit 1 ;;
-    esac
-    ;;
-  restart)
-    case "$TARGET" in
-      btc) "$STOP_BTC" && "$START_BTC" ;;
-      eurusd) "$STOP_EURUSD" && "$START_EURUSD" ;;
-      all) "$STOP_BTC" && "$STOP_EURUSD" && "$START_BTC" && "$START_EURUSD" ;;
-      *) usage; exit 1 ;;
-    esac
-    ;;
-  status)
-    case "$TARGET" in
-      btc) status_one "BTC" "$BTC_PID_FILE" "$BTC_LOG_FILE" ;;
-      eurusd) status_one "EURUSD" "$EURUSD_PID_FILE" "$EURUSD_LOG_FILE" ;;
-      all)
-        status_one "BTC" "$BTC_PID_FILE" "$BTC_LOG_FILE"
-        status_one "EURUSD" "$EURUSD_PID_FILE" "$EURUSD_LOG_FILE"
-        ;;
-      *) usage; exit 1 ;;
-    esac
-    ;;
-  logs)
-    case "$TARGET" in
-      btc) logs_one "$BTC_LOG_FILE" ;;
-      eurusd) logs_one "$EURUSD_LOG_FILE" ;;
-      all)
-        echo "===== BTC ====="
-        logs_one "$BTC_LOG_FILE"
-        echo "===== EURUSD ====="
-        logs_one "$EURUSD_LOG_FILE"
-        ;;
-      *) usage; exit 1 ;;
-    esac
-    ;;
+  start)   "$START_BTC" ;;
+  stop)    "$STOP_BTC" ;;
+  restart) "$STOP_BTC" && "$START_BTC" ;;
+  status)  status_one "BTC" "$BTC_PID_FILE" "$BTC_LOG_FILE" ;;
+  logs)    logs_one "$BTC_LOG_FILE" ;;
   *)
     usage
     exit 1
