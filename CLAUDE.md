@@ -83,6 +83,9 @@ P&L. Zero trades during burn-in is a PASS (BTC is far below the entry band).
 1. Clean burn-in uptime record (~2–4 weeks from 2026-07-14).
 2. Implement live order path: python-binance, market orders, min-notional
    (~$5 spot) checks; live mode currently raises NotImplementedError.
+   **Size from actual USDT/BTC balances at each switch, not remembered
+   amounts — user DCAs monthly deposits into the account (plan agreed
+   2026-07-15), and deposits must auto-deploy at the next BUY.**
 3. **Rotate Binance API keys before wiring real orders — non-negotiable.**
    User chose to keep the exposed keys during paper phase (2026-07-14);
    advised meanwhile: disable withdrawals + IP-restrict the key on Binance.
