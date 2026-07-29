@@ -63,20 +63,44 @@ CSV-parsed datetimes may not be ns-resolution; `astype("int64")` then yields
 NOT-nanoseconds and silently breaks epoch math. Convert via
 `.values.astype("datetime64[ns]")` first.
 
-## Deployment status (2026-07-14)
+## Deployment status — PAUSED 2026-07-29 (VPS being destroyed)
 
-**Deployed and running** on the user's DigitalOcean droplet
-(`ubuntu-s-1vcpu-2gb-sgp1`, Ubuntu 24.04, repo at `/root/ai-trader`) as
-systemd service `ai-trader` (enabled = survives reboots, Restart=always).
-Runbook: [DEPLOY.md](DEPLOY.md). First check confirmed correct behavior:
-close 62,335 < buy trigger 72,130 → flat in USDT, $200 paper equity.
-The old nohup/PID bots on the droplet were already dead (stale PID files) —
-that silent-death fragility is why systemd is required.
+Was deployed on a DigitalOcean droplet (`ubuntu-s-1vcpu-2gb-sgp1`, $12/mo,
+Ubuntu 24.04, repo at `/root/ai-trader`) as systemd service `ai-trader`
+(enabled = survives reboots, Restart=always) from 2026-07-14 to 2026-07-29.
+**Paper burn-in PASSED** (15 days, one graceful restart survived correctly
+via systemd, zero errors, zero state corruption — see gate 1 below). No live
+trade was ever placed; real Binance balance stayed at $0.04 (never funded).
 
-**Paper burn-in started 2026-07-14, runs ~2–4 weeks.** Success = uptime and
-correct mechanics (hourly heartbeats in `journalctl -u ai-trader`, reboot
-survival, correct switch + Telegram alert if a band crossing happens) — NOT
-P&L. Zero trades during burn-in is a PASS (BTC is far below the entry band).
+**User is destroying the droplet to stop the $12/mo cost while paused**
+(reasoning: no live position, no funds deposited, BTC nowhere near the entry
+trigger — lowest-risk possible moment to pause). Destroying (not just
+powering off) is required to actually stop DO billing. `.env` is gitignored
+and only existed on the droplet — user was told to save its contents (Telegram
+token/chat ID + rotated Binance key/secret) externally before destroying;
+everything else (all code) is already on GitHub main, current as of commit
+`bd07b88`, nothing is lost by destroying the droplet.
+
+**To resume — do this in order:**
+1. Spin up a fresh droplet (any size — even $6/mo 1GB comfortably fits this
+   bot; the old $12/mo 2GB was oversized for a ~47MB-RAM workload).
+2. Follow [DEPLOY.md](DEPLOY.md) top to bottom (same as original deploy).
+3. Restore `.env` (from the user's saved backup, or re-enter values).
+4. **Update the Binance API key's IP restriction to the NEW droplet's IP** —
+   the old IP is gone with the old droplet; skipping this makes `--check-live`
+   and any live order fail auth (fails safe, but blocks operation until fixed).
+5. Re-verify: `--check-live`, then a fresh burn-in stretch before trusting it
+   again (the 15-day record was validated on infra that no longer exists).
+6. Decide when to actually deposit funds and flip `LIVE_TRADING=true` —
+   nothing about strategy validity expired during the pause, only the
+   infra-uptime evidence needs re-establishing.
+
+DO resize was attempted first (cheaper tier on the SAME droplet, no migration
+needed) but DO does not allow shrinking disk on resize — the $4/$6 tiers were
+greyed out ("not available because it has a smaller disk") since the existing
+50GB disk is locked to the $12+/mo tiers. A same-provider fresh-droplet
+migration to a smaller disk was considered and explicitly deferred in favor
+of a full pause instead.
 
 ## Agreed gates to live trading (in order)
 
@@ -96,10 +120,16 @@ P&L. Zero trades during burn-in is a PASS (BTC is far below the entry band).
    with no order placed. Failed live orders leave `last_processed_close`
    unsaved so the next hourly check retries automatically. Full walkthrough:
    [DEPLOY.md](DEPLOY.md) "Going live" section.
-3. **Rotate Binance API keys before flipping LIVE_TRADING=true — still
-   non-negotiable, NOT yet done as of 2026-07-29.** User chose to keep the
-   exposed keys during paper phase (2026-07-14). New key must have Spot
-   Trading enabled, Withdrawals disabled, IP-restricted to the droplet.
+   **Follow-up fix (commit bd07b88, same day):** order-response fields
+   (`executedQty`/`cummulativeQuoteQty`) are the GROSS trade amount, not
+   fee-net — fixed to read the real balance delta before/after each order
+   instead, which is correct regardless of which asset pays the fee (BTC/USDT
+   vs BNB discount). Trade *sizing* was never affected (always balance-based),
+   only logged/state precision was.
+3. ~~Rotate Binance API keys~~ ✅ **DONE 2026-07-29**, confirmed by user:
+   Withdrawals disabled + IP-restricted (to the droplet that has since been
+   destroyed — **the new droplet's IP must be added to this key's restriction
+   when resuming**, see Deployment status above).
 4. Go live with the $200. Expectation set with user: ~1–3%/month average,
    lumpy months, −50%+ historical drawdowns, possibly months in cash.
    The #1 risk is abandoning the system mid-drawdown — remind, don't tinker.
