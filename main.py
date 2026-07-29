@@ -282,12 +282,18 @@ def check_and_act(state):
                 log(f"USDT balance ${spend:.2f} below min notional "
                     f"{filt['min_notional']} — skipping BUY this cycle.")
                 return
+            # executedQty from the order response is the GROSS BTC bought,
+            # before Binance deducts the trading fee (from BTC, or from BNB
+            # if fee-discount is enabled) — it does NOT reliably equal what
+            # lands in the wallet. Read the real balance delta instead, which
+            # is correct regardless of which asset paid the fee.
+            btc_before = get_free_balance("BTC")
             order = place_market_order(
                 SYMBOL, "BUY", quote_order_qty=f"{spend:.2f}"
             )
-            qty = float(order["executedQty"])       # already fee-net (BTC fee)
-            spend = float(order["cummulativeQuoteQty"])
-            fee = spend * COMMISSION_RATE            # informational only
+            spend = float(order["cummulativeQuoteQty"])  # USDT spent — not fee-reduced
+            qty = get_free_balance("BTC") - btc_before    # BTC actually received
+            fee = spend * COMMISSION_RATE                  # informational estimate only
             fill = spend / qty if qty else close
 
         state.update(position="BTC", usdt=0.0, btc_qty=qty, entry_price=fill)
@@ -315,13 +321,17 @@ def check_and_act(state):
                 log(f"BTC balance {qty_raw:.8f} below min notional — "
                     f"skipping SELL this cycle.")
                 return
+            # Symmetric to the BUY fix: cummulativeQuoteQty is the GROSS USDT
+            # from the sale, before the fee is deducted (from USDT, or BNB if
+            # fee-discount is enabled) — read the real balance delta instead.
+            usdt_before = get_free_balance("USDT")
             order = place_market_order(
                 SYMBOL, "SELL", quantity=format(qty_dec, "f")
             )
-            qty = float(qty_dec)
-            proceeds = float(order["cummulativeQuoteQty"])  # fee-net (USDT fee)
+            qty = float(qty_dec)                              # BTC sold — not fee-reduced
+            proceeds = get_free_balance("USDT") - usdt_before   # USDT actually received
             fill = proceeds / qty if qty else close
-            fee = proceeds * COMMISSION_RATE                # informational only
+            fee = proceeds * COMMISSION_RATE                    # informational estimate only
 
         pnl = (fill - (state["entry_price"] or fill)) * qty - fee
         state.update(position="USDT", usdt=proceeds, btc_qty=0.0,
