@@ -50,7 +50,7 @@ ENV
 chmod 600 .env
 ```
 
-No Binance keys needed until live trading is implemented.
+No Binance keys needed for paper mode.
 
 ## 5. Smoke test
 
@@ -91,3 +91,42 @@ cd ~/ai-trader && git pull && systemctl restart ai-trader
 `allocator_state.json` is gitignored, so restarts/updates never lose position
 state. To reset the paper account, stop the service, delete
 `allocator_state.json` + `allocator_trades.csv`, start again.
+
+## Going live (only after burn-in has passed)
+
+The order path sizes every trade from your **actual** Binance USDT/BTC
+balance at the moment of the switch — never from a remembered number — so
+monthly DCA deposits into the account auto-deploy at the next BUY signal
+with no code or config change.
+
+**Do this in order — do not skip step 1:**
+
+1. **Rotate your Binance API keys.** Binance → API Management → delete the
+   old key → create a new one. On the new key: enable **Spot Trading**,
+   **disable Withdrawals**, and **IP-restrict** it to the droplet's IP.
+2. Update `.env` on the droplet:
+   ```bash
+   cat >> .env <<'ENV'
+   BINANCE_API_KEY=your_new_key
+   BINANCE_API_SECRET=your_new_secret
+   ENV
+   ```
+3. **Test read-only connectivity before enabling trading** — this does not
+   place any order:
+   ```bash
+   ./venv/bin/python main.py --check-live
+   ```
+   Expect your real free USDT/BTC balances to print. If this errors, fix it
+   before continuing (bad key, wrong permissions, IP restriction mismatch).
+4. Flip the switch:
+   ```bash
+   echo 'LIVE_TRADING=true' >> .env
+   systemctl restart ai-trader
+   journalctl -fu ai-trader   # confirm: "mode=LIVE"
+   ```
+5. A safety cap (`BINANCE_MAX_NOTIONAL_USD`, default $5000) blocks any single
+   order above that size and alerts instead of trading — raise it in `.env`
+   only once the account has genuinely grown that large via DCA.
+
+To go back to paper mode: remove `LIVE_TRADING=true` from `.env` (or set it
+to `false`) and restart the service.

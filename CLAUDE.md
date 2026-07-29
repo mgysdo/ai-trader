@@ -80,15 +80,26 @@ P&L. Zero trades during burn-in is a PASS (BTC is far below the entry band).
 
 ## Agreed gates to live trading (in order)
 
-1. Clean burn-in uptime record (~2–4 weeks from 2026-07-14).
-2. Implement live order path: python-binance, market orders, min-notional
-   (~$5 spot) checks; live mode currently raises NotImplementedError.
-   **Size from actual USDT/BTC balances at each switch, not remembered
-   amounts — user DCAs monthly deposits into the account (plan agreed
-   2026-07-15), and deposits must auto-deploy at the next BUY.**
-3. **Rotate Binance API keys before wiring real orders — non-negotiable.**
-   User chose to keep the exposed keys during paper phase (2026-07-14);
-   advised meanwhile: disable withdrawals + IP-restrict the key on Binance.
+1. ~~Clean burn-in uptime record~~ ✅ **PASSED 2026-07-29.** 15 days, one
+   graceful restart (systemd `enable` + `Restart=always` recovered it
+   correctly, not a crash loop — confirmed via journalctl start/stop pairs),
+   zero errors, zero state corruption, hourly heartbeats unbroken.
+2. ~~Implement live order path~~ ✅ **DONE 2026-07-29.** main.py: hand-rolled
+   HMAC-signed Binance REST client (no new deps — stdlib hmac/hashlib/decimal
+   + existing requests). `LIVE_TRADING=true` in `.env` flips it (default
+   stays PAPER). Sizes every order from the **actual live USDT/BTC balance**
+   at that moment (get_free_balance), not remembered state — DCA deposits
+   auto-deploy at the next BUY as required. MIN_NOTIONAL/LOT_SIZE filters
+   fetched from Binance and respected (round_down_step). Safety cap
+   `BINANCE_MAX_NOTIONAL_USD` (default $5000) refuses oversized orders and
+   alerts instead. `--check-live` does a read-only balance/connectivity test
+   with no order placed. Failed live orders leave `last_processed_close`
+   unsaved so the next hourly check retries automatically. Full walkthrough:
+   [DEPLOY.md](DEPLOY.md) "Going live" section.
+3. **Rotate Binance API keys before flipping LIVE_TRADING=true — still
+   non-negotiable, NOT yet done as of 2026-07-29.** User chose to keep the
+   exposed keys during paper phase (2026-07-14). New key must have Spot
+   Trading enabled, Withdrawals disabled, IP-restricted to the droplet.
 4. Go live with the $200. Expectation set with user: ~1–3%/month average,
    lumpy months, −50%+ historical drawdowns, possibly months in cash.
    The #1 risk is abandoning the system mid-drawdown — remind, don't tinker.
