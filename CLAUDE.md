@@ -49,6 +49,19 @@ Intraday BTC on OHLC candles, 12 months of real 5m/1h data, 70/30 train/test:
 | Bollinger+RSI mean reversion 5m & 1h, long-only | 132 | 0 (0 even in-sample) |
 | Donchian breakout 5m & 1h, futures fees, both sides | 24 | 0 (6 in-sample, all collapsed) |
 
+**YouTube "1-minute scalping" strategies (tested 2026-11-17, 21 days of real
+1m Binance data, BTC −21% / ETH −24% / SOL −28% over the window):**
+
+| Video strategy | Test | Result after real fees |
+|---|---|---|
+| VWAP ± σ-band mean reversion, 1m BTC (buy lower band → exit at VWAP), long-only spot 0.075%/side | 1/2/3σ, ± stop | 6/6 lose: $38 → $16.63–$36.12. Zero-fee version looks great (63% win) — that's what the videos show |
+| Fib pump-fade SHORT, 1m (strong green vol-spike candle → pullback to 0.3/0.2 → short the bounce at 0.5/0.6), futures 10x, promo for Bybit referral | BTC/ETH/SOL, 3 entry/stop combos, futures maker+taker fees | All lose (PF 0.13–0.63) even in a falling market that favours shorts; zero-fee edge ≈ +0.003–0.016%/trade; 10x → −32% to −84% |
+
+Lesson: if a strategy only works without fees, it doesn't work. TradingView
+backtests/paper trading default to zero fees, which is why these look good on
+video. "Bear flag" chart-pattern video (2026-11-17) = useful market-structure
+reading (lower highs, broken support → resistance), not a testable strategy.
+
 Structural lessons: (1) gross edge of these signals ≈ zero — fees only made it
 worse; (2) tight 5m stops + fixed-$ risk ⇒ large notional ⇒ ~0.15%/side costs
 put every trade ~1R down; (3) the original bot's 3 paper trades (2 wins) were
@@ -101,6 +114,11 @@ greyed out ("not available because it has a smaller disk") since the existing
 50GB disk is locked to the $12+/mo tiers. A same-provider fresh-droplet
 migration to a smaller disk was considered and explicitly deferred in favor
 of a full pause instead.
+
+**Account state (2026-11-17):** Katana DeFi positions (Yearn vaults, avKAT)
+withdrawn; 38.68 USDT deposited to Binance Spot. "Use BNB to pay fees" is ON
+(spot 0.075%/side). User started trading manually on Binance Spot (browser) —
+Claude may analyse charts and compute order values but never places orders.
 
 ## Agreed gates to live trading (in order)
 
