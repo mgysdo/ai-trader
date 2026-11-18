@@ -77,6 +77,23 @@ USD/JPY, gold futures; ~60–73 days 5m; NY/08:20/London/Asia opens, 64
 variants, retail costs 0.015–0.03% rt): 63 of 64 lose; only gold 08:20 ET
 breakout RR1 +1.4% (PF 1.17) ≈ chance. Gross edge ≈ 0 everywhere.
 
+**Fib 50% retracement + leverage scale-in (YouTube "Simple Way To Profit In
+Any Market Trading Crypto With Leverage", Bitget-sponsored, tested
+2026-11-19):** after a swing, buy the 50% retrace, add at 61.8/78.6, stop
+below swing low, target swing high. BTC+ETH, 15m/1h/4h, long+short, 12
+configs: ~45% hit target vs ~50% stopped (coin flip); 10 of 12 lose at 1x
+after futures fees; at 5x 11 of 12 lose (−20…−100%), at 10x 11 of 12 lose
+~all. Only ETH 15m short positive (+8% at 1x) in a −17% market ≈ chance.
+
+**Morning reversal at 09:30 ET (YouTube "How To Day Trade Using Only $50",
+Riley Coleman, NinjaTrader affiliate, tested 2026-11-19):** discretionary;
+approximated as: session trends ≥X% from open → big counter candle with
+LH/HL → enter on its break, stop beyond session extreme, 1:3 RR, BE at 1R.
+ES/NQ/gold (60d) all lose. ETH looked good on 180d (PF 1.5) but on 2y split:
+1st half 0 of 12 param sets profitable, 2nd half 7 of 12 → regime luck, not
+edge. BTC 2y: lost in nearly all variants. The video's *process* advice
+(demo first, avoid prop firms, few trades, 1:3 RR, don't overtrade) is sound.
+
 **Candlestick patterns (tested 2026-11-18)**, 24 classic patterns (hammer,
 engulfing, harami, stars, tweezers, three-inside/outside, soldiers/crows…) on
 BTC+ETH 1d (9y) / 4h (3y) / 1h (1y), next-3-candle return vs baseline: ≈ coin
