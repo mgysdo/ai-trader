@@ -66,6 +66,17 @@ ETH daily allocator (same SMA100±2% rules, OOS for ETH): 31.7x vs 3.95x B&H,
 maxDD −66% vs −94% (2017-11→2026-11); but 2% band is a spike (1%=17.7x,
 3%=14.3x) → expect ~12–18x. Not yet in main.py.
 
+**Opening Range Breakout (YouTube "1 Minute Scalping Strategy Works Everyday",
+tested 2026-11-19):** mark 15m range at 09:30 ET, enter on 5m close beyond
+(breakout) or on retest, stop other side/mid, target 1–2R. US stocks, 60 days
+5m Yahoo data: NVDA PF 1.3–1.5 (only via shorts while NVDA −28%; long-only
+lost), TSLA/AAPL/QQQ/SPY ≈ 0 or negative. BTC/ETH (180d, US-open or 00:00 UTC
+"open"): 11 of 12 variants lose after fees. 60 days is too short to validate
+the NVDA result → not proven, not pursued. Forex + gold (EUR/USD, GBP/USD,
+USD/JPY, gold futures; ~60–73 days 5m; NY/08:20/London/Asia opens, 64
+variants, retail costs 0.015–0.03% rt): 63 of 64 lose; only gold 08:20 ET
+breakout RR1 +1.4% (PF 1.17) ≈ chance. Gross edge ≈ 0 everywhere.
+
 **Candlestick patterns (tested 2026-11-18)**, 24 classic patterns (hammer,
 engulfing, harami, stars, tweezers, three-inside/outside, soldiers/crows…) on
 BTC+ETH 1d (9y) / 4h (3y) / 1h (1y), next-3-candle return vs baseline: ≈ coin
