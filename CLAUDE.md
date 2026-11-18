@@ -57,6 +57,24 @@ Intraday BTC on OHLC candles, 12 months of real 5m/1h data, 70/30 train/test:
 | VWAP ± σ-band mean reversion, 1m BTC (buy lower band → exit at VWAP), long-only spot 0.075%/side | 1/2/3σ, ± stop | 6/6 lose: $38 → $16.63–$36.12. Zero-fee version looks great (63% win) — that's what the videos show |
 | Fib pump-fade SHORT, 1m (strong green vol-spike candle → pullback to 0.3/0.2 → short the bounce at 0.5/0.6), futures 10x, promo for Bybit referral | BTC/ETH/SOL, 3 entry/stop combos, futures maker+taker fees | All lose (PF 0.13–0.63) even in a falling market that favours shorts; zero-fee edge ≈ +0.003–0.016%/trade; 10x → −32% to −84% |
 
+**Re-confirmed 2026-11-18 on BTC + ETH** (1m/30d and 5m/90d, 5 scalping
+archetypes + random-entry control × 6 TP/SL combos = 144 variants): 0
+profitable after maker fees (0.15% rt); every ≥70%-win-rate variant (small TP,
+wide SL) also lost; real signals ≈ random entries (gross edge ≈ 0). Caveat:
+long-only in a falling window (BTC −7…−22%, ETH −20…−26%).
+ETH daily allocator (same SMA100±2% rules, OOS for ETH): 31.7x vs 3.95x B&H,
+maxDD −66% vs −94% (2017-11→2026-11); but 2% band is a spike (1%=17.7x,
+3%=14.3x) → expect ~12–18x. Not yet in main.py.
+
+**Candlestick patterns (tested 2026-11-18)**, 24 classic patterns (hammer,
+engulfing, harami, stars, tweezers, three-inside/outside, soldiers/crows…) on
+BTC+ETH 1d (9y) / 4h (3y) / 1h (1y), next-3-candle return vs baseline: ≈ coin
+flip — most point the right way in only 2–3 of 6 datasets; significant hits
+(5 of 144) ≈ what chance alone gives. Only exception: **Three white soldiers
+on DAILY** (+2–2.5% excess, 5/6 right way) = trend continuation, i.e. the same
+effect the allocator already captures. Use patterns as chart vocabulary only;
+`scripts/scan_candles.py` labels recent candles with this caveat.
+
 Lesson: if a strategy only works without fees, it doesn't work. TradingView
 backtests/paper trading default to zero fees, which is why these look good on
 video. "Bear flag" chart-pattern video (2026-11-17) = useful market-structure
