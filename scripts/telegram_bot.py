@@ -103,7 +103,17 @@ HELP = ("Read-only commands:\n/status – price, holdings, P&L, distance to orde
 
 
 def send(text):
-    requests.post(f"{API}/sendMessage", data={"chat_id": TELEGRAM_CHAT_ID, "text": text}, timeout=10)
+    for attempt in range(3):
+        try:
+            r = requests.post(f"{API}/sendMessage",
+                              data={"chat_id": TELEGRAM_CHAT_ID, "text": text[:4000]}, timeout=10).json()
+            if r.get("ok"):
+                return True
+            print(f"send failed: {r.get('description')}", flush=True)
+        except Exception as e:
+            print(f"send error: {e}", flush=True)
+        time.sleep(2)
+    return False
 
 
 def main():
@@ -145,8 +155,8 @@ def main():
                     reply = fn() if fn else "Unknown command. " + HELP
                 except Exception as e:
                     reply = f"Error: {e}"
-                send(reply)
-                print(f"answered {cmd}", flush=True)
+                ok = send(reply)
+                print(f"{time.strftime('%H:%M:%S')} {cmd} → {'sent' if ok else 'SEND FAILED'}", flush=True)
         except Exception as e:
             print(f"poll error: {e}", flush=True)
             time.sleep(5)
