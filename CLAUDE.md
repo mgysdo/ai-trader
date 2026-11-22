@@ -103,6 +103,19 @@ on DAILY** (+2–2.5% excess, 5/6 right way) = trend continuation, i.e. the same
 effect the allocator already captures. Use patterns as chart vocabulary only;
 `scripts/scan_candles.py` labels recent candles with this caveat.
 
+**1h bullish signal against the 4h trend = trap (live case, 2026-11-19):**
+`watch_bullish.py` v1 (1h close > 64k reclaim & EMA50, 1h RSI > 50, 1h
+higher low) fired at 64,038 while the 4h close was still below its 4h EMA20 —
+that was the exact top. BTC then fell −14% to 55,130 in ~40h (crash low
+2026-11-21, record volume). The user's manual spot trade (0.0006 BTC @
+64,385) was stopped out by its OCO at 61,378 for −$1.85 (−4.8%), as planned;
+holding would have been −$5.60 at the low. The user didn't take the leverage
+trade: 10× would have been liquidated, and 3× with a stop would have lost ~8%
+of margin. Watcher v2 now requires the 4h trend to confirm (4h close > EMA20, 4h RSI > 50,
+4h higher low). Also: daily RSI ≈ 20 ("oversold") did not mark the bottom,
+and it fell another 14%. Meanwhile the allocator was in cash the whole time
+(BTC −33% from its 120d high of 87,396).
+
 Lesson: if a strategy only works without fees, it doesn't work. TradingView
 backtests/paper trading default to zero fees, which is why these look good on
 video. "Bear flag" chart-pattern video (2026-11-17) = useful market-structure

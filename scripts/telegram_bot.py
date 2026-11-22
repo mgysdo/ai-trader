@@ -23,7 +23,7 @@ from main import (  # noqa: E402
     _binance_public_get,
     _binance_signed_request,
 )
-from watch_bullish import check, klines  # noqa: E402
+from watch_bullish import SUPPORT, check, klines  # noqa: E402
 
 API = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
 FEE = 0.00075  # spot fee per side with BNB
@@ -75,9 +75,9 @@ def cmd_orders():
     return "\n".join(rows)
 
 
-def cmd_check(reclaim, support):
-    c, conds, ctx, broke = check(reclaim, support)
-    lines = [f"1h close {c:,.0f}"] + [f"{'✅' if v else '❌'} {k}" for k, v in conds.items()] + [ctx]
+def cmd_check(support):
+    c, conds, ctx, broke = check(support)
+    lines = [f"4h close {c:,.0f}"] + [f"{'✅' if v else '❌'} {k}" for k, v in conds.items()] + [ctx]
     lines.append("🟢 ALL MET" if all(conds.values()) else f"{sum(conds.values())}/3 met — no signal yet")
     if broke:
         lines.append(f"🔴 below key support {support:,.0f}")
@@ -98,7 +98,7 @@ def cmd_levels():
 
 
 HELP = ("Read-only commands:\n/status – price, holdings, P&L, distance to orders\n"
-        "/orders – open BTCUSDT orders\n/check – bullish checklist (1h)\n"
+        "/orders – open BTCUSDT orders\n/check – 4h trend-turn checklist\n"
         "/levels – key highs/lows, EMA, allocator trigger\n(no trading commands by design)")
 
 
@@ -119,8 +119,7 @@ def send(text):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--entry", type=float, default=64384.93)
-    ap.add_argument("--reclaim", type=float, default=64000)
-    ap.add_argument("--support", type=float, default=62006)
+    ap.add_argument("--support", type=float, default=SUPPORT)
     a = ap.parse_args()
     if not (TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID):
         sys.exit("TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID missing from .env")
@@ -136,7 +135,7 @@ def main():
     handlers = {
         "/status": lambda: cmd_status(a.entry),
         "/orders": cmd_orders,
-        "/check": lambda: cmd_check(a.reclaim, a.support),
+        "/check": lambda: cmd_check(a.support),
         "/levels": cmd_levels,
         "/help": lambda: HELP,
         "/start": lambda: HELP,
