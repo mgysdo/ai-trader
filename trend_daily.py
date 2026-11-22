@@ -12,7 +12,6 @@ tomorrow) — no lookahead.
     ./venv/bin/python trend_daily.py
 """
 
-import numpy as np
 import pandas as pd
 
 COST_PER_SIDE = 0.0015

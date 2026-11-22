@@ -18,14 +18,29 @@ deposits over time. Do not entertain $/day targets on small capital.
   hourly via public Binance REST, acts at most once per completed UTC daily
   candle. State: `allocator_state.json` (survives restarts). Trades:
   `allocator_trades.csv`. Telegram on switches. `--once` flag = single check
-  (cron/testing). Live mode raises NotImplementedError until paper burn-in
-  passes.
+  (cron/testing). `LIVE_TRADING=true` in `.env` enables real orders (default
+  paper); `--check-live` = read-only connectivity test.
 - [trend_daily.py](trend_daily.py) — self-contained 9-year validation of the
   strategy (keep; rerun after refetching data to re-verify).
 - [scripts/fetch_data.py](scripts/fetch_data.py) — Binance public klines →
   `data/*.csv`. e.g. `--interval 1d --months 108`.
 - `data/BTCUSDT_1d.csv` — daily history 2017→2026 used by trend_daily.py.
 - `scripts/botctl.sh` — start|stop|restart|status|logs for the bot.
+- Manual-trading helpers. The **user** runs every `--confirm`/`--cancel`; Claude
+  only runs dry runs and read-only checks:
+  - [scripts/place_entry.py](scripts/place_entry.py): stop-limit BUY, then it
+    auto-places the protective OCO when the buy fills (`--resume ORDER_ID` waits on an
+    existing buy; `--cancel`). Dry run by default.
+  - [scripts/place_oco.py](scripts/place_oco.py): protective OCO sell (TP +
+    stop-limit) on BTC already held.
+  - [scripts/watch_bullish.py](scripts/watch_bullish.py): read-only 4h
+    trend-turn alert (failed its backtest, so it's an alert-to-look tool only).
+    `--no-telegram` = exit on alert, for Claude Code background tasks + mobile push
+    (the user's preferred channel).
+  - [scripts/telegram_bot.py](scripts/telegram_bot.py): read-only Telegram
+    command bot (/status /orders /check /levels). Currently off.
+  - [scripts/scan_candles.py](scripts/scan_candles.py): labels recent
+    candlestick patterns (vocabulary only).
 - venv rebuilt 2026-07-14 (Homebrew python3); deps: requests, pandas, numpy,
   python-dotenv only.
 
@@ -115,6 +130,16 @@ of margin. Watcher v2 now requires the 4h trend to confirm (4h close > EMA20, 4h
 4h higher low). Also: daily RSI ≈ 20 ("oversold") did not mark the bottom,
 and it fell another 14%. Meanwhile the allocator was in cash the whole time
 (BTC −33% from its 120d high of 87,396).
+
+**Watcher v2 4h checklist backtested (2026-11-22) — FAILS OOS, never automate.**
+Fresh signal (4h close>EMA20, RSI>50, confirmed higher low w=2) → long next
+open, stop under swing low, fees 0.075%/side, 2018-05→2026-11 4h, 70/30 split,
+200× random-entry control. 10 variants (TP 1/2/3R, EMA exit, 4-day time exit, ±
+daily SMA100 filter). Train looked great (+dailySMA100, EMA exit: PF 1.95,
++752% vs random +103%), but in the test window all were PF ≤ 1.09. That best one
+went to PF 0.82, −20%, worse than random 68% of the time. The in-sample "edge" was just the
+daily trend (= the allocator). The allocator over the same test window: +49%,
+maxDD −27%, 15 switches. The watcher stays an alert-to-look tool only.
 
 Lesson: if a strategy only works without fees, it doesn't work. TradingView
 backtests/paper trading default to zero fees, which is why these look good on
