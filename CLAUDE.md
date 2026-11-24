@@ -30,7 +30,9 @@ deposits over time. Do not entertain $/day targets on small capital.
   only runs dry runs and read-only checks:
   - [scripts/place_entry.py](scripts/place_entry.py): stop-limit BUY, then it
     auto-places the protective OCO when the buy fills (`--resume ORDER_ID` waits on an
-    existing buy; `--cancel`). Dry run by default.
+    existing buy; `--cancel`). `--buy-limit PRICE` = LIMIT buy below the price as
+    one OTOCO, so Binance attaches the OCO itself (preferred; no laptop needed).
+    Dry run by default.
   - [scripts/place_oco.py](scripts/place_oco.py): protective OCO sell (TP +
     stop-limit) on BTC already held.
   - [scripts/watch_bullish.py](scripts/watch_bullish.py): read-only 4h
@@ -130,6 +132,22 @@ of margin. Watcher v2 now requires the 4h trend to confirm (4h close > EMA20, 4h
 4h higher low). Also: daily RSI ≈ 20 ("oversold") did not mark the bottom,
 and it fell another 14%. Meanwhile the allocator was in cash the whole time
 (BTC −33% from its 120d high of 87,396).
+
+**News-driven short squeezes fade against the daily trend (live case, 2026-11-23):**
+Nvidia reinstated Jensen Huang after his 2026-11-12 exit, which had helped
+crash BTC to 55,130. BTC spiked from ~61k to 64,603 in minutes on 12,166 BTC of 4h volume
+(~$372M of shorts liquidated), left a long upper wick, faded the same day, and
+broke the 60,386 4h higher low to reach ~59.5k by 2026-11-24. The buying was forced
+short-covering, not new demand. Once it was spent, the daily downtrend
+(RSI ~27, far below SMA100) resumed. A long wick above resistance on
+huge volume = exhaustion, not a breakout. "Buy the dip after the fake-out" also
+failed. Manual trade log on ~38.7 USDT (spot, every trade with an OCO stop):
+(1) 64,385 → stop 61,378, −$1.85; (2) 61,100 → TP 63,700, +$1.51;
+(3) 61,500 → stop 60,300, −$0.80. Total ≈ −$1.10 (−2.8%), vs ≈ −7.5% for
+buy-and-hold from entry 1. Stops worked every time, but there was no edge: 1 win, 2 small losses,
+consistent with the backtests. The allocator stayed in cash throughout.
+Helpers that worked: `place_entry.py --buy-limit` (an OTOCO, where Binance attaches the
+TP/stop on fill, so no laptop is needed) and moving the stop up above break-even once in profit.
 
 **Watcher v2 4h checklist backtested (2026-11-22) — FAILS OOS, never automate.**
 Fresh signal (4h close>EMA20, RSI>50, confirmed higher low w=2) → long next

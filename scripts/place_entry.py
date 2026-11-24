@@ -67,6 +67,9 @@ def main():
     ap.add_argument("--confirm", action="store_true", help="actually place the buy")
     ap.add_argument("--no-protect", action="store_true", help="don't wait/auto-place the OCO")
     ap.add_argument("--cancel", action="store_true", help="cancel open BUY orders")
+    ap.add_argument("--buy-limit", metavar="PRICE",
+                    help="instead of a stop-limit breakout buy: LIMIT buy BELOW the price, sent as one "
+                         "OTOCO so Binance itself attaches the TP/stop OCO on fill (no laptop needed)")
     ap.add_argument("--resume", metavar="ORDER_ID", help="don't place a buy; wait on this existing "
                     "buy order and auto-place the OCO when it fills")
     a = ap.parse_args()
@@ -75,6 +78,8 @@ def main():
 
     if a.resume:
         return protect(int(a.resume), a)
+    if a.buy_limit:
+        return limit_otoco(a)
 
     if a.cancel:
         buys = [o for o in api("GET", "/api/v3/openOrders", {"symbol": SYMBOL}) if o["side"] == "BUY"]
@@ -131,6 +136,49 @@ def main():
         print(f"No auto-protect. Later: --resume {oid}, or place the OCO yourself once it fills.")
         return
     protect(oid, a)
+
+
+def limit_otoco(a):
+    price = float(_binance_public_get("/api/v3/ticker/price", {"symbol": SYMBOL})["price"])
+    usdt = get_free_balance("USDT")
+    filt = get_symbol_filters(SYMBOL)
+    q, bl = float(a.qty), float(a.buy_limit)
+    tp, stop, sl = float(a.tp), float(a.stop), float(a.stop_limit)
+    cost = q * bl * (1 + FEE)
+    print(f"BTC now {price:,.2f} | free USDT {usdt:.2f}")
+    print(f"OTOCO: LIMIT BUY {a.qty} BTC @ {a.buy_limit} (GTC), cost ≈ {cost:.2f} USDT")
+    print(f"  on fill → OCO SELL: TP {a.tp} | stop {a.stop} / limit {a.stop_limit}")
+    print(f"≈ net if TP: {q * tp * (1 - FEE) - cost:+.2f} USD | if stop (worst): {q * sl * (1 - FEE) - cost:+.2f} USD")
+    problems = []
+    if not bl < price:
+        problems.append("buy limit must be BELOW the current price (else it fills now as taker)")
+    if not tp > bl:
+        problems.append("take-profit must be above the buy limit")
+    if not sl <= stop < bl:
+        problems.append("need stop-limit <= stop < buy limit")
+    if cost > usdt:
+        problems.append(f"cost {cost:.2f} > free USDT {usdt:.2f}")
+    if Decimal(a.qty) != round_down_step(a.qty, filt["step_size"]):
+        problems.append(f"qty must be a multiple of {filt['step_size']}")
+    if problems:
+        sys.exit("Refusing:\n  - " + "\n  - ".join(problems))
+    if not a.confirm:
+        print("\nDry run only — nothing sent. Re-run with --confirm to place it.")
+        return
+    r = api("POST", "/api/v3/orderList/otoco", {
+        "symbol": SYMBOL,
+        "workingType": "LIMIT", "workingSide": "BUY", "workingPrice": a.buy_limit,
+        "workingQuantity": a.qty, "workingTimeInForce": "GTC",
+        "pendingSide": "SELL", "pendingQuantity": a.qty,
+        "pendingAboveType": "LIMIT_MAKER", "pendingAbovePrice": a.tp,
+        "pendingBelowType": "STOP_LOSS_LIMIT", "pendingBelowStopPrice": a.stop,
+        "pendingBelowPrice": a.stop_limit, "pendingBelowTimeInForce": "GTC",
+    })
+    print(f"\nPlaced OTOCO. orderListId={r.get('orderListId')} status={r.get('listOrderStatus')}")
+    for o in r.get("orderReports", []):
+        print(f"  {o['side']} {o['type']} {o['origQty']} @ {o['price']} → {o['status']}")
+    print("Binance attaches the TP/stop itself when the buy fills. "
+          "To cancel the whole thing: ./venv/bin/python scripts/place_oco.py --cancel")
 
 
 def protect(oid, a):
